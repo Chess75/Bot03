@@ -37,7 +37,13 @@ class Engine:
     async def test(cls, engine_config: Engine_Config) -> None:
         stderr = subprocess.DEVNULL if engine_config.silence_stderr else None
 
-        transport, engine = await chess.engine.popen_uci(engine_config.path, stderr=stderr)
+        if engine_config.path.endswith('.py'):
+            # Запускаем через python
+            transport, engine = await chess.engine.popen_uci(
+                [sys.executable, engine_config.path], stderr=stderr)
+        else:
+            transport, engine = await chess.engine.popen_uci(engine_config.path, stderr=stderr)
+
         await cls._configure_engine(engine, engine_config, Syzygy_Config(False, [], 0, False))
         result = await engine.play(chess.Board(), chess.engine.Limit(time=0.1), info=chess.engine.INFO_ALL)
 
