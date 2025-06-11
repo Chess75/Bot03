@@ -28,4 +28,4 @@ jobs:
         run: |
           python user_interface.py
         env:
-          TOKEN: ${{ secrets.LICHESS_TOKEN }}
+          TOKEN: lip_Esvk91RCfjLl0FnBGc97
