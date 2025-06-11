@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import logging
@@ -30,10 +31,30 @@ MOVE_RETRY_CONDITIONS = {'retry': retry_if_exception_type((aiohttp.ClientError, 
 
 class API:
     def __init__(self, config: Config) -> None:
-        self.lichess_session = aiohttp.ClientSession(config.url, headers={'Authorization': f'Bearer {config.token}',
-                                                                          'User-Agent': f'BotLi/{config.version}'},
-                                                     timeout=aiohttp.ClientTimeout(total=5.0))
-        self.external_session = aiohttp.ClientSession(headers={'User-Agent': f'BotLi/{config.version}'})
+        # Подгружаем токен из переменной окружения, если в config.token стоит 'env:TOKEN'
+        token = config.token
+        if isinstance(token, str) and token.startswith('env:'):
+            env_var = token.split(':', 1)[1]
+            token = os.getenv(env_var)
+            if not token:
+                raise RuntimeError(f"Environment variable '{env_var}' is not set")
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'User-Agent': f'BotLi/{config.version}'
+        }
+
+        self.lichess_session = aiohttp.ClientSession(
+            config.url,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=5.0)
+        )
+        self.external_session = aiohttp.ClientSession(
+            headers={'User-Agent': f'BotLi/{config.version}'}
+        )
+
+    # --- остальной код без изменений ---
+    # просто вставь сюда всё, что было в твоём классе API после __init__
 
     async def __aenter__(self) -> 'API':
         return self
