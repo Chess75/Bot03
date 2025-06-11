@@ -1,6 +1,7 @@
 import asyncio
 import os
 import subprocess
+import sys
 
 import chess
 import chess.engine
