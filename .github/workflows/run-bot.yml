@@ -22,7 +22,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Сделать файл движка исполняемым
-        run: chmod +x ./engines/SmileyMate
+        run: chmod +x ./engines/SmileyMate.py
 
       - name: Запуск бота
         run: |
