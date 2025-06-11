@@ -1,7 +1,7 @@
 name: Запуск бота
 
 on:
-  workflow_dispatch:  # запуск вручную
+  workflow_dispatch:  # Позволяет запускать вручную через интерфейс GitHub
 
 jobs:
   run-bot:
@@ -20,13 +20,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install python-chess
 
       - name: Сделать файл движка исполняемым
-        run: chmod +x ./engines/SmileyMate.py
+        run: chmod +x ./engines/fairy-stockfish
 
       - name: Запуск бота
-        run: python user_interface.py
+        run: |
+          python user_interface.py
         env:
           TOKEN: ${{ secrets.TOKEN }}
-
