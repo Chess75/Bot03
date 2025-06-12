@@ -1,1 +1,3 @@
 token: "__TOKEN__"
+engine:
+  path: "./engines/SmileyMate.py"
