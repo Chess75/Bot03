@@ -16,9 +16,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Подставляем токен в config.yml
-        run: |
-          sed "s|__TOKEN__|${{ secrets.TOKEN }}|g" config.template.yml > config.yml
 
       - name: Установка зависимостей
         run: |
