@@ -16,6 +16,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Подставляем токен в config.yml
+        run: |
+          sed "s|__TOKEN__|${{ secrets.TOKEN }}|g" config.template.yml > config.yml
+
       - name: Установка зависимостей
         run: |
           python -m pip install --upgrade pip
@@ -25,7 +29,5 @@ jobs:
         run: chmod +x ./engines/SmileyMate.py
 
       - name: Запуск бота
-        run: |
-          python user_interface.py
-        env:
-          TOKEN: ${{ secrets.TOKEN }}
+        run: python user_interface.py
+
