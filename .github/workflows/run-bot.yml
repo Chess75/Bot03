@@ -1,31 +1,27 @@
-name: Запуск бота
-
-on:
-  workflow_dispatch:
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
-    env:  
+    env:
       TOKEN: ${{ secrets.TOKEN }}
 
     steps:
-      - name: Проверка кода
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Установка Python 3.11
+      - name: Установить Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Установка зависимостей
+      - name: Установить зависимости
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Сделать файл движка исполняемым
+      - name: Подставить токен
+        run: |
+          sed -i "s/^token:.*/token: \"${TOKEN}\"/" config.yml
+
+      - name: Сделать движок исполняемым
         run: chmod +x ./engines/SmileyMate.py
 
-      - name: Запуск бота
+      - name: Запустить бота
         run: python user_interface.py
