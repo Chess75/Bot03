@@ -12,36 +12,61 @@ piece_values = {
     chess.KING: 0
 }
 
+center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
+
 def evaluate_board(board):
+    # Мат — супер + для выигрывающей стороны, супер - для проигрывающей
+    if board.is_checkmate():
+        # Если ход черных и мат — значит белые выиграли и наоборот
+        return 10000 if board.turn == chess.BLACK else -10000
+    if board.is_stalemate():
+        return 0
+
     score = 0
     for piece_type in piece_values:
         score += len(board.pieces(piece_type, chess.WHITE)) * piece_values[piece_type]
         score -= len(board.pieces(piece_type, chess.BLACK)) * piece_values[piece_type]
+    for square in center_squares:
+        piece = board.piece_at(square)
+        if piece:
+            score += 0.2 if piece.color == chess.WHITE else -0.2
     return score
 
-def attack_score(board, color):
-    score = 0
-    for move in board.legal_moves:
-        if board.is_capture(move):
-            target_piece = board.piece_at(move.to_square)
-            if target_piece:
-                val = piece_values.get(target_piece.piece_type, 0)
-                score += val
-    return score if color == chess.WHITE else -score
+def minimax(board, depth):
+    if depth == 0 or board.is_game_over():
+        return evaluate_board(board)
+
+    legal_moves = list(board.legal_moves)
+    if board.turn == chess.WHITE:
+        max_eval = -float('inf')
+        for move in legal_moves:
+            board.push(move)
+            eval = minimax(board, depth - 1)
+            board.pop()
+            if eval > max_eval:
+                max_eval = eval
+        return max_eval
+    else:
+        min_eval = float('inf')
+        for move in legal_moves:
+            board.push(move)
+            eval = minimax(board, depth - 1)
+            board.pop()
+            if eval < min_eval:
+                min_eval = eval
+        return min_eval
 
 def choose_move(board):
+    # Если первый ход в партии — берём случайный, чтобы не тормозить
+    if board.fullmove_number == 1:
+        return random.choice(list(board.legal_moves))
+
     best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
     best_moves = []
 
     for move in board.legal_moves:
         board.push(move)
-
-        material = evaluate_board(board)
-        mobility = board.legal_moves.count()
-        attack = attack_score(board, board.turn)
-
-        score = material + 0.1 * mobility + 0.5 * attack
-
+        score = minimax(board, 2)  # глубина 2
         board.pop()
 
         if board.turn == chess.WHITE:
@@ -68,8 +93,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 1.0.2")
-            print("id author YourName")
+            print("id name SmileyMate version 1.0.3")
+            print("id author Classic")
             print("uciok")
         elif line == "isready":
             print("readyok")
