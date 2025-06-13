@@ -133,7 +133,7 @@ challenge:                                # Incoming challenges. (Commenting all
 # max_initial: 315360000                  # Maximum amount of initial time to accept a challenge.
   variants:                               # Chess variants to accept (https://lichess.org/variant).
     - standard
-    - chess960
+#   - chess960
 #   - fromPosition
 #   - antichess
 #   - atomic
@@ -149,7 +149,7 @@ challenge:                                # Incoming challenges. (Commenting all
 #   - classical
 #   - 25+0
   bot_modes:                              # Game modes to accept against BOTs.
-#   - casual                              # Unrated games.
+    - casual                              # Unrated games.
     - rated                               # Rated games
   human_modes:                            # Game modes to accept against humans.
     - casual                              # Unrated games.
