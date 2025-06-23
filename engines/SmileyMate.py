@@ -2,6 +2,7 @@
 import sys
 import chess
 import random
+import time
 
 piece_values = {
     chess.PAWN: 1,
@@ -14,10 +15,36 @@ piece_values = {
 
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 
+def king_safety(board, color):
+    king_square = board.king(color)
+    if king_square is None:
+        return 0  # король съеден? Это уже мат или нонсенс
+
+    enemy_color = not color
+    danger_score = 0
+
+    # Проверяем угрозы королю — сколько фигур атакуют короля и рядом
+    king_zone = [king_square]
+    # Добавим соседние клетки вокруг короля для оценки
+    for sq in chess.SQUARES:
+        if chess.square_distance(sq, king_square) == 1:
+            king_zone.append(sq)
+
+    for sq in king_zone:
+        attackers = board.attackers(enemy_color, sq)
+        danger_score += len(attackers) * 0.5  # штраф за каждую угрозу
+
+    # Проверим наличие своих фигур рядом — бонус за защиту
+    defenders = 0
+    for sq in king_zone:
+        piece = board.piece_at(sq)
+        if piece and piece.color == color and piece.piece_type != chess.KING:
+            defenders += 0.3  # небольшой бонус за защиту
+
+    return defenders - danger_score  # чем выше — тем безопаснее король
+
 def evaluate_board(board):
-    # Мат — супер + для выигрывающей стороны, супер - для проигрывающей
     if board.is_checkmate():
-        # Если ход черных и мат — значит белые выиграли и наоборот
         return 10000 if board.turn == chess.BLACK else -10000
     if board.is_stalemate():
         return 0
@@ -30,10 +57,15 @@ def evaluate_board(board):
         piece = board.piece_at(square)
         if piece:
             score += 0.2 if piece.color == chess.WHITE else -0.2
+
+    # Добавляем безопасность короля
+    score += king_safety(board, chess.WHITE)
+    score -= king_safety(board, chess.BLACK)
+
     return score
 
-def minimax(board, depth):
-    if depth == 0 or board.is_game_over():
+def minimax(board, depth, alpha, beta, start_time, time_limit):
+    if depth == 0 or board.is_game_over() or (time.time() - start_time) > time_limit:
         return evaluate_board(board)
 
     legal_moves = list(board.legal_moves)
@@ -41,51 +73,82 @@ def minimax(board, depth):
         max_eval = -float('inf')
         for move in legal_moves:
             board.push(move)
-            eval = minimax(board, depth - 1)
+            eval = minimax(board, depth - 1, alpha, beta, start_time, time_limit)
             board.pop()
             if eval > max_eval:
                 max_eval = eval
+            alpha = max(alpha, eval)
+            if beta <= alpha:
+                break
         return max_eval
     else:
         min_eval = float('inf')
         for move in legal_moves:
             board.push(move)
-            eval = minimax(board, depth - 1)
+            eval = minimax(board, depth - 1, alpha, beta, start_time, time_limit)
             board.pop()
             if eval < min_eval:
                 min_eval = eval
+            beta = min(beta, eval)
+            if beta <= alpha:
+                break
         return min_eval
 
-def choose_move(board):
-    # Если первый ход в партии — берём случайный, чтобы не тормозить
+def choose_search_params(format_name):
+    format_name = format_name.lower()
+    if "bullet" in format_name:
+        return 2, 0.5
+    elif "blitz" in format_name:
+        return 3, 1.5
+    else:
+        return 4, 3.0
+
+def iterative_deepening(board, max_depth, time_limit):
+    start_time = time.time()
+    best_move = None
+    for depth in range(1, max_depth + 1):
+        best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
+        moves_at_this_depth = []
+        for move in board.legal_moves:
+            board.push(move)
+            score = minimax(board, depth - 1, -float('inf'), float('inf'), start_time, time_limit)
+            board.pop()
+            if board.turn == chess.WHITE:
+                if score > best_score:
+                    best_score = score
+                    moves_at_this_depth = [move]
+                elif score == best_score:
+                    moves_at_this_depth.append(move)
+            else:
+                if score < best_score:
+                    best_score = score
+                    moves_at_this_depth = [move]
+                elif score == best_score:
+                    moves_at_this_depth.append(move)
+
+            if time.time() - start_time > time_limit:
+                break
+
+        if moves_at_this_depth:
+            best_move = random.choice(moves_at_this_depth)
+
+        if time.time() - start_time > time_limit:
+            break
+
+    return best_move
+
+def choose_move(board, format_name="blitz"):
     if board.fullmove_number == 1:
         return random.choice(list(board.legal_moves))
 
-    best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
-    best_moves = []
-
-    for move in board.legal_moves:
-        board.push(move)
-        score = minimax(board, 2)  # глубина 2
-        board.pop()
-
-        if board.turn == chess.WHITE:
-            if score > best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-        else:
-            if score < best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-
-    return random.choice(best_moves) if best_moves else None
+    max_depth, time_limit = choose_search_params(format_name)
+    move = iterative_deepening(board, max_depth, time_limit)
+    return move
 
 def main():
     board = chess.Board()
+    format_name = "blitz"
+
     while True:
         line = sys.stdin.readline()
         if not line:
@@ -93,13 +156,17 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 1.0.3")
+            print("id name SmileyMate version 1.0.5")
             print("id author Classic")
             print("uciok")
         elif line == "isready":
             print("readyok")
         elif line.startswith("ucinewgame"):
             board.reset()
+        elif line.startswith("setoption"):
+            parts = line.split()
+            if len(parts) >= 5 and parts[1] == "name" and parts[2] == "Format":
+                format_name = parts[4]
         elif line.startswith("position"):
             parts = line.split(" ")
             if "startpos" in parts:
@@ -119,7 +186,7 @@ def main():
                     for mv in moves:
                         board.push_uci(mv)
         elif line.startswith("go"):
-            move = choose_move(board)
+            move = choose_move(board, format_name)
             if move is not None:
                 print("bestmove", move.uci())
             else:
@@ -131,3 +198,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
