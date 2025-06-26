@@ -14,91 +14,50 @@ piece_values = {
 
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 
-def evaluate_pawn_structure(board):
-    score = 0
-    for color in [chess.WHITE, chess.BLACK]:
-        pawns = board.pieces(chess.PAWN, color)
-        files = [chess.square_file(sq) for sq in pawns]
-
-        isolated_penalty = 0.2
-        doubled_penalty = 0.2
-
-        for f in set(files):
-            count = files.count(f)
-            if count > 1:
-                penalty = -doubled_penalty * (count - 1)
-                score += penalty if color == chess.WHITE else -penalty
-
-            if (f - 1 not in files) and (f + 1 not in files):
-                penalty = -isolated_penalty
-                score += penalty if color == chess.WHITE else -penalty
-    return score
-
 def evaluate_board(board):
+    # Мат — супер + для выигрывающей стороны, супер - для проигрывающей
     if board.is_checkmate():
+        # Если ход черных и мат — значит белые выиграли и наоборот
         return 10000 if board.turn == chess.BLACK else -10000
-    if board.is_stalemate() or board.is_insufficient_material():
+    if board.is_stalemate():
         return 0
 
     score = 0
-
-    # Материал
     for piece_type in piece_values:
-        white_count = len(board.pieces(piece_type, chess.WHITE))
-        black_count = len(board.pieces(piece_type, chess.BLACK))
-        value = piece_values[piece_type]
-        score += value * (white_count - black_count)
-
-    # Активность (подвижность)
-    white_moves = len(list(board.legal_moves)) if board.turn == chess.WHITE else 0
-    board.push(chess.Move.null())
-    black_moves = len(list(board.legal_moves)) if board.turn == chess.BLACK else 0
-    board.pop()
-    score += 0.1 * (white_moves - black_moves)
-
-    # Пешечная структура
-    score += evaluate_pawn_structure(board)
-
-    # Центр
+        score += len(board.pieces(piece_type, chess.WHITE)) * piece_values[piece_type]
+        score -= len(board.pieces(piece_type, chess.BLACK)) * piece_values[piece_type]
     for square in center_squares:
         piece = board.piece_at(square)
         if piece:
-            bonus = 0.2
-            score += bonus if piece.color == chess.WHITE else -bonus
-
+            score += 0.2 if piece.color == chess.WHITE else -0.2
     return score
 
-def alphabeta(board, depth, alpha, beta, maximizing):
+def minimax(board, depth):
     if depth == 0 or board.is_game_over():
         return evaluate_board(board)
 
     legal_moves = list(board.legal_moves)
-
-    if maximizing:
+    if board.turn == chess.WHITE:
         max_eval = -float('inf')
         for move in legal_moves:
             board.push(move)
-            eval = alphabeta(board, depth - 1, alpha, beta, False)
+            eval = minimax(board, depth - 1)
             board.pop()
-            max_eval = max(max_eval, eval)
-            alpha = max(alpha, eval)
-            if beta <= alpha:
-                break
+            if eval > max_eval:
+                max_eval = eval
         return max_eval
     else:
         min_eval = float('inf')
         for move in legal_moves:
             board.push(move)
-            eval = alphabeta(board, depth - 1, alpha, beta, True)
+            eval = minimax(board, depth - 1)
             board.pop()
-            min_eval = min(min_eval, eval)
-            beta = min(beta, eval)
-            if beta <= alpha:
-                break
+            if eval < min_eval:
+                min_eval = eval
         return min_eval
 
 def choose_move(board):
-    # Первый ход — случайный для разнообразия
+    # Если первый ход в партии — берём случайный, чтобы не тормозить
     if board.fullmove_number == 1:
         return random.choice(list(board.legal_moves))
 
@@ -107,7 +66,7 @@ def choose_move(board):
 
     for move in board.legal_moves:
         board.push(move)
-        score = alphabeta(board, depth=3, alpha=-float('inf'), beta=float('inf'), maximizing=(not board.turn))
+        score = minimax(board, 2)  # глубина 2
         board.pop()
 
         if board.turn == chess.WHITE:
@@ -134,7 +93,7 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate v1.0.4")
+            print("id name SmileyMate version 1.0.3")
             print("id author Classic")
             print("uciok")
         elif line == "isready":
@@ -172,4 +131,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
