@@ -33,9 +33,17 @@ jobs:
         run: |
           sed -i "s/^token:.*/token: \"${TOKEN}\"/" config.yml
 
-      - name: Сделать движок исполняемым
-        run: chmod +x ./engines/smileymate.cpp
+      - name: Установить компилятор C++
+        run: |
+          sudo apt update
+          sudo apt install -y g++
+
+      - name: Скомпилировать движок
+        run: |
+          g++ -std=c++17 -O2 ./engines/smileymate.cpp -o ./engines/smileymate
+          chmod +x ./engines/smileymate
 
       - name: Запустить бота
         run: python user_interface.py
+
 
