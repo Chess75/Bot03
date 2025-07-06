@@ -128,8 +128,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 3.0")
-            print("id author ClassicGPT")
+            print("id name SmileyMate version 2.1")
+            print("id author Classic")
             print("uciok")
         elif line == "isready":
             print("readyok")
