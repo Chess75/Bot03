@@ -17,7 +17,7 @@ center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 
 def evaluate_board(board):
     if board.is_checkmate():
-        return 10000 if board.turn == chess.BLACK else -10000
+        return -9999 if board.turn else 9999
     if board.is_stalemate():
         return 0
 
@@ -31,93 +31,92 @@ def evaluate_board(board):
         if piece:
             score += 0.2 if piece.color == chess.WHITE else -0.2
 
-    for square in chess.SquareSet(chess.BB_BACKRANKS):
-        piece = board.piece_at(square)
-        if piece and piece.piece_type == chess.KING:
-            score += 0.5 if piece.color == chess.WHITE else -0.5
-
     return score
 
-def minimax(board, depth, alpha, beta, start_time, time_limit):
-    if depth == 0 or board.is_game_over() or time.time() - start_time > time_limit:
-        return evaluate_board(board)
+def quiescence(board, alpha, beta):
+    stand_pat = evaluate_board(board)
+    if stand_pat >= beta:
+        return beta
+    if alpha < stand_pat:
+        alpha = stand_pat
 
-    legal_moves = list(board.legal_moves)
-    if board.turn == chess.WHITE:
-        max_eval = -float('inf')
-        for move in legal_moves:
+    for move in board.legal_moves:
+        if board.is_capture(move) or board.gives_check(move):
             board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta, start_time, time_limit)
+            score = -quiescence(board, -beta, -alpha)
             board.pop()
-            max_eval = max(max_eval, eval)
-            alpha = max(alpha, eval)
-            if beta <= alpha:
-                break
-        return max_eval
-    else:
-        min_eval = float('inf')
-        for move in legal_moves:
-            board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta, start_time, time_limit)
-            board.pop()
-            min_eval = min(min_eval, eval)
-            beta = min(beta, eval)
-            if beta <= alpha:
-                break
-        return min_eval
 
-def is_blunder(board, move):
-    piece = board.piece_at(move.from_square)
-    if not piece:
-        return False
-    board.push(move)
-    eval_after = evaluate_board(board)
-    board.pop()
-    if piece.piece_type == chess.QUEEN and eval_after < -5:
-        return True
-    return False
+            if score >= beta:
+                return beta
+            if score > alpha:
+                alpha = score
+
+    return alpha
+
+def alphabeta(board, depth, alpha, beta, start_time, time_limit):
+    if time.time() - start_time > time_limit:
+        raise TimeoutError()
+
+    if depth == 0:
+        return quiescence(board, alpha, beta)
+
+    best_score = -float('inf')
+    for move in board.legal_moves:
+        board.push(move)
+        score = -alphabeta(board, depth - 1, -beta, -alpha, start_time, time_limit)
+        board.pop()
+
+        if score >= beta:
+            return beta
+        if score > best_score:
+            best_score = score
+        if score > alpha:
+            alpha = score
+
+    return best_score
 
 def iterative_deepening(board, max_time):
     start_time = time.time()
     best_move = None
+    best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
     depth = 1
-    while True:
-        if time.time() - start_time > max_time:
-            break
-        current_best = None
-        best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
-        for move in board.legal_moves:
-            if is_blunder(board, move):
-                continue
-            board.push(move)
-            score = minimax(board, depth - 1, -float('inf'), float('inf'), start_time, max_time)
-            board.pop()
 
-            if board.turn == chess.WHITE:
-                if score > best_score:
+    try:
+        while True:
+            current_best = None
+            for move in board.legal_moves:
+                board.push(move)
+                score = -alphabeta(board, depth - 1, -float('inf'), float('inf'), start_time, max_time)
+                board.pop()
+
+                if board.turn == chess.WHITE and score > best_score:
                     best_score = score
                     current_best = move
-            else:
-                if score < best_score:
+                elif board.turn == chess.BLACK and score < best_score:
                     best_score = score
                     current_best = move
 
-        if current_best:
-            best_move = current_best
-        depth += 1
+            if current_best:
+                best_move = current_best
+            depth += 1
+
+    except TimeoutError:
+        pass
+
     return best_move
 
 def choose_move(board):
     if board.fullmove_number == 1:
         return iterative_deepening(board, max_time=5.0)
 
-    time_left = 60  # допустим у нас 60 секунд, или можно динамически получать
+    time_left = 60  # заглушка, можно доработать
     if time_left < 10:
         max_time = 0.1
     elif time_left < 30:
         max_time = 0.3
     else:
         max_time = 1.5
+
     return iterative_deepening(board, max_time=max_time)
 
 def main():
@@ -129,7 +128,7 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 2.0")
+            print("id name SmileyMate version 3.0")
             print("id author ClassicGPT")
             print("uciok")
         elif line == "isready":
