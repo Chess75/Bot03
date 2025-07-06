@@ -34,7 +34,7 @@ jobs:
           sed -i "s/^token:.*/token: \"${TOKEN}\"/" config.yml
 
       - name: Сделать движок исполняемым
-        run: chmod +x ./engines/SmileyMate.py
+        run: chmod +x ./engines/smileymate.py
 
       - name: Запустить бота
         run: python user_interface.py
