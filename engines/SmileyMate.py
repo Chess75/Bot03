@@ -15,49 +15,138 @@ piece_values = {
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 
 def evaluate_board(board):
-    # Мат — супер + для выигрывающей стороны, супер - для проигрывающей
     if board.is_checkmate():
-        # Если ход черных и мат — значит белые выиграли и наоборот
         return 10000 if board.turn == chess.BLACK else -10000
     if board.is_stalemate():
         return 0
 
     score = 0
+
+    # 1. Материал
     for piece_type in piece_values:
         score += len(board.pieces(piece_type, chess.WHITE)) * piece_values[piece_type]
         score -= len(board.pieces(piece_type, chess.BLACK)) * piece_values[piece_type]
+
+    # 2. Безопасность короля (штраф за открытый файл)
+    for color in [chess.WHITE, chess.BLACK]:
+        king_sq = board.king(color)
+        if king_sq is not None:
+            file = chess.square_file(king_sq)
+            file_squares = [chess.square(file, rank) for rank in range(8)]
+            open_file = all(board.piece_type_at(sq) != chess.PAWN for sq in file_squares)
+            if open_file:
+                score += -0.5 if color == chess.WHITE else 0.5
+
+    # 3. Пешечная структура
+    def pawn_structure_penalty(color):
+        pawns = board.pieces(chess.PAWN, color)
+        files = [chess.square_file(sq) for sq in pawns]
+        penalties = 0
+        for file in set(files):
+            count = files.count(file)
+            if count > 1:
+                penalties += 0.25 * (count - 1)  # двойные
+        for sq in pawns:
+            file = chess.square_file(sq)
+            adj_files = [file - 1, file + 1]
+            has_adjacent = False
+            for adj in adj_files:
+                if 0 <= adj <= 7:
+                    for rank in range(8):
+                        if board.piece_at(chess.square(adj, rank)) == chess.Piece(chess.PAWN, color):
+                            has_adjacent = True
+                            break
+            if not has_adjacent:
+                penalties += 0.3  # изолированная
+        return penalties
+
+    score -= pawn_structure_penalty(chess.WHITE)
+    score += pawn_structure_penalty(chess.BLACK)
+
+    # Проходные пешки
+    def passed_pawn_bonus(color):
+        bonus = 0
+        direction = 1 if color == chess.WHITE else -1
+        pawns = board.pieces(chess.PAWN, color)
+        enemy_pawns = board.pieces(chess.PAWN, not color)
+        for sq in pawns:
+            file = chess.square_file(sq)
+            rank = chess.square_rank(sq)
+            blocked = False
+            for step in range(1, 8):
+                forward_rank = rank + step * direction
+                if forward_rank < 0 or forward_rank > 7:
+                    break
+                for adj_file in [file - 1, file, file + 1]:
+                    if 0 <= adj_file <= 7:
+                        check_sq = chess.square(adj_file, forward_rank)
+                        if check_sq in enemy_pawns:
+                            blocked = True
+                            break
+                if blocked:
+                    break
+            if not blocked:
+                bonus += 0.5
+        return bonus
+
+    score += passed_pawn_bonus(chess.WHITE)
+    score -= passed_pawn_bonus(chess.BLACK)
+
+    # 4. Центр
     for square in center_squares:
         piece = board.piece_at(square)
         if piece:
             score += 0.2 if piece.color == chess.WHITE else -0.2
+
+    # 5. Мобильность
+    white_mob = len(list(board.legal_moves)) if board.turn == chess.WHITE else 0
+    board.push(chess.Move.null())
+    black_mob = len(list(board.legal_moves)) if board.turn == chess.BLACK else 0
+    board.pop()
+    score += 0.05 * white_mob - 0.05 * black_mob
+
     return score
 
-def minimax(board, depth):
+def order_moves(board):
+    def move_score(move):
+        score = 0
+        if board.is_capture(move):
+            score += 10
+        if board.gives_check(move):
+            score += 5
+        return score
+    return sorted(board.legal_moves, key=move_score, reverse=True)
+
+def alphabeta(board, depth, alpha, beta, maximizing_player):
     if depth == 0 or board.is_game_over():
         return evaluate_board(board)
 
-    legal_moves = list(board.legal_moves)
-    if board.turn == chess.WHITE:
+    moves = order_moves(board)
+
+    if maximizing_player:
         max_eval = -float('inf')
-        for move in legal_moves:
+        for move in moves:
             board.push(move)
-            eval = minimax(board, depth - 1)
+            eval = alphabeta(board, depth - 1, alpha, beta, False)
             board.pop()
-            if eval > max_eval:
-                max_eval = eval
+            max_eval = max(max_eval, eval)
+            alpha = max(alpha, eval)
+            if beta <= alpha:
+                break
         return max_eval
     else:
         min_eval = float('inf')
-        for move in legal_moves:
+        for move in moves:
             board.push(move)
-            eval = minimax(board, depth - 1)
+            eval = alphabeta(board, depth - 1, alpha, beta, True)
             board.pop()
-            if eval < min_eval:
-                min_eval = eval
+            min_eval = min(min_eval, eval)
+            beta = min(beta, eval)
+            if beta <= alpha:
+                break
         return min_eval
 
 def choose_move(board):
-    # Если первый ход в партии — берём случайный, чтобы не тормозить
     if board.fullmove_number == 1:
         return random.choice(list(board.legal_moves))
 
@@ -66,7 +155,7 @@ def choose_move(board):
 
     for move in board.legal_moves:
         board.push(move)
-        score = minimax(board, 2)  # глубина 2
+        score = alphabeta(board, 3, -float('inf'), float('inf'), not board.turn)
         board.pop()
 
         if board.turn == chess.WHITE:
@@ -93,7 +182,7 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 1.0.3")
+            print("id name SmileyMate version 1.4")
             print("id author Classic")
             print("uciok")
         elif line == "isready":
@@ -131,4 +220,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
                
