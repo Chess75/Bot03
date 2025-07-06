@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import sys
+import time
 import chess
 import random
 
 piece_values = {
     chess.PAWN: 1,
     chess.KNIGHT: 3,
-    chess.BISHOP: 3,
+    chess.BISHOP: 3.25,
     chess.ROOK: 5,
     chess.QUEEN: 9,
     chess.KING: 0
@@ -21,113 +22,32 @@ def evaluate_board(board):
         return 0
 
     score = 0
-
-    # 1. Материал
     for piece_type in piece_values:
         score += len(board.pieces(piece_type, chess.WHITE)) * piece_values[piece_type]
         score -= len(board.pieces(piece_type, chess.BLACK)) * piece_values[piece_type]
 
-    # 2. Безопасность короля
-    for color in [chess.WHITE, chess.BLACK]:
-        king_sq = board.king(color)
-        if king_sq is not None:
-            file = chess.square_file(king_sq)
-            file_squares = [chess.square(file, rank) for rank in range(8)]
-            open_file = all(board.piece_type_at(sq) != chess.PAWN for sq in file_squares)
-            if open_file:
-                score += -0.5 if color == chess.WHITE else 0.5
-
-    # 3. Пешечная структура
-    def pawn_structure_penalty(color):
-        pawns = board.pieces(chess.PAWN, color)
-        files = [chess.square_file(sq) for sq in pawns]
-        penalties = 0
-        for file in set(files):
-            count = files.count(file)
-            if count > 1:
-                penalties += 0.25 * (count - 1)  # двойные
-        for sq in pawns:
-            file = chess.square_file(sq)
-            adj_files = [file - 1, file + 1]
-            has_adjacent = False
-            for adj in adj_files:
-                if 0 <= adj <= 7:
-                    for rank in range(8):
-                        if board.piece_at(chess.square(adj, rank)) == chess.Piece(chess.PAWN, color):
-                            has_adjacent = True
-                            break
-            if not has_adjacent:
-                penalties += 0.3  # изолированные
-        return penalties
-
-    score -= pawn_structure_penalty(chess.WHITE)
-    score += pawn_structure_penalty(chess.BLACK)
-
-    # Проходные пешки
-    def passed_pawn_bonus(color):
-        bonus = 0
-        direction = 1 if color == chess.WHITE else -1
-        pawns = board.pieces(chess.PAWN, color)
-        enemy_pawns = board.pieces(chess.PAWN, not color)
-        for sq in pawns:
-            file = chess.square_file(sq)
-            rank = chess.square_rank(sq)
-            blocked = False
-            for step in range(1, 8):
-                forward_rank = rank + step * direction
-                if forward_rank < 0 or forward_rank > 7:
-                    break
-                for adj_file in [file - 1, file, file + 1]:
-                    if 0 <= adj_file <= 7:
-                        check_sq = chess.square(adj_file, forward_rank)
-                        if check_sq in enemy_pawns:
-                            blocked = True
-                            break
-                if blocked:
-                    break
-            if not blocked:
-                bonus += 0.5
-        return bonus
-
-    score += passed_pawn_bonus(chess.WHITE)
-    score -= passed_pawn_bonus(chess.BLACK)
-
-    # 4. Центр
     for square in center_squares:
         piece = board.piece_at(square)
         if piece:
             score += 0.2 if piece.color == chess.WHITE else -0.2
 
-    # 5. Мобильность
-    white_mob = len(list(board.legal_moves)) if board.turn == chess.WHITE else 0
-    board.push(chess.Move.null())
-    black_mob = len(list(board.legal_moves)) if board.turn == chess.BLACK else 0
-    board.pop()
-    score += 0.05 * white_mob - 0.05 * black_mob
+    for square in chess.SquareSet(chess.BB_BACKRANKS):
+        piece = board.piece_at(square)
+        if piece and piece.piece_type == chess.KING:
+            score += 0.5 if piece.color == chess.WHITE else -0.5
 
     return score
 
-def order_moves(board):
-    def move_score(move):
-        score = 0
-        if board.is_capture(move):
-            score += 10
-        if board.gives_check(move):
-            score += 5
-        return score
-    return sorted(board.legal_moves, key=move_score, reverse=True)
-
-def alphabeta(board, depth, alpha, beta, maximizing_player):
-    if depth == 0 or board.is_game_over():
+def minimax(board, depth, alpha, beta, start_time, time_limit):
+    if depth == 0 or board.is_game_over() or time.time() - start_time > time_limit:
         return evaluate_board(board)
 
-    moves = order_moves(board)
-
-    if maximizing_player:
+    legal_moves = list(board.legal_moves)
+    if board.turn == chess.WHITE:
         max_eval = -float('inf')
-        for move in moves:
+        for move in legal_moves:
             board.push(move)
-            eval = alphabeta(board, depth - 1, alpha, beta, False)
+            eval = minimax(board, depth - 1, alpha, beta, start_time, time_limit)
             board.pop()
             max_eval = max(max_eval, eval)
             alpha = max(alpha, eval)
@@ -136,9 +56,9 @@ def alphabeta(board, depth, alpha, beta, maximizing_player):
         return max_eval
     else:
         min_eval = float('inf')
-        for move in moves:
+        for move in legal_moves:
             board.push(move)
-            eval = alphabeta(board, depth - 1, alpha, beta, True)
+            eval = minimax(board, depth - 1, alpha, beta, start_time, time_limit)
             board.pop()
             min_eval = min(min_eval, eval)
             beta = min(beta, eval)
@@ -146,44 +66,62 @@ def alphabeta(board, depth, alpha, beta, maximizing_player):
                 break
         return min_eval
 
-def choose_move(board, time_left_ms):
+def is_blunder(board, move):
+    piece = board.piece_at(move.from_square)
+    if not piece:
+        return False
+    board.push(move)
+    eval_after = evaluate_board(board)
+    board.pop()
+    if piece.piece_type == chess.QUEEN and eval_after < -5:
+        return True
+    return False
+
+def iterative_deepening(board, max_time):
+    start_time = time.time()
+    best_move = None
+    depth = 1
+    while True:
+        if time.time() - start_time > max_time:
+            break
+        current_best = None
+        best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
+        for move in board.legal_moves:
+            if is_blunder(board, move):
+                continue
+            board.push(move)
+            score = minimax(board, depth - 1, -float('inf'), float('inf'), start_time, max_time)
+            board.pop()
+
+            if board.turn == chess.WHITE:
+                if score > best_score:
+                    best_score = score
+                    current_best = move
+            else:
+                if score < best_score:
+                    best_score = score
+                    current_best = move
+
+        if current_best:
+            best_move = current_best
+        depth += 1
+    return best_move
+
+def choose_move(board):
     if board.fullmove_number == 1:
-        return random.choice(list(board.legal_moves))
+        return iterative_deepening(board, max_time=5.0)
 
-    if time_left_ms < 10000:
-        depth = 1
-    elif time_left_ms < 30000:
-        depth = 2
+    time_left = 60  # допустим у нас 60 секунд, или можно динамически получать
+    if time_left < 10:
+        max_time = 0.1
+    elif time_left < 30:
+        max_time = 0.3
     else:
-        depth = 3
-
-    best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
-    best_moves = []
-
-    for move in board.legal_moves:
-        board.push(move)
-        score = alphabeta(board, depth, -float('inf'), float('inf'), not board.turn)
-        board.pop()
-
-        if board.turn == chess.WHITE:
-            if score > best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-        else:
-            if score < best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-
-    return random.choice(best_moves) if best_moves else None
+        max_time = 1.5
+    return iterative_deepening(board, max_time=max_time)
 
 def main():
     board = chess.Board()
-    wtime = btime = 60000  # default time in ms
-
     while True:
         line = sys.stdin.readline()
         if not line:
@@ -191,8 +129,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 2.1")
-            print("id author Classic")
+            print("id name SmileyMate version 2.0")
+            print("id author ClassicGPT")
             print("uciok")
         elif line == "isready":
             print("readyok")
@@ -217,15 +155,7 @@ def main():
                     for mv in moves:
                         board.push_uci(mv)
         elif line.startswith("go"):
-            parts = line.split()
-            for i in range(len(parts)):
-                if parts[i] == "wtime":
-                    wtime = int(parts[i + 1])
-                elif parts[i] == "btime":
-                    btime = int(parts[i + 1])
-
-            time_left = wtime if board.turn == chess.WHITE else btime
-            move = choose_move(board, time_left)
+            move = choose_move(board)
             if move is not None:
                 print("bestmove", move.uci())
             else:
