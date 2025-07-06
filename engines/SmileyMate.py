@@ -27,7 +27,7 @@ def evaluate_board(board):
         score += len(board.pieces(piece_type, chess.WHITE)) * piece_values[piece_type]
         score -= len(board.pieces(piece_type, chess.BLACK)) * piece_values[piece_type]
 
-    # 2. Безопасность короля (штраф за открытый файл)
+    # 2. Безопасность короля
     for color in [chess.WHITE, chess.BLACK]:
         king_sq = board.king(color)
         if king_sq is not None:
@@ -57,7 +57,7 @@ def evaluate_board(board):
                             has_adjacent = True
                             break
             if not has_adjacent:
-                penalties += 0.3  # изолированная
+                penalties += 0.3  # изолированные
         return penalties
 
     score -= pawn_structure_penalty(chess.WHITE)
@@ -146,16 +146,23 @@ def alphabeta(board, depth, alpha, beta, maximizing_player):
                 break
         return min_eval
 
-def choose_move(board):
+def choose_move(board, time_left_ms):
     if board.fullmove_number == 1:
         return random.choice(list(board.legal_moves))
+
+    if time_left_ms < 10000:
+        depth = 1
+    elif time_left_ms < 30000:
+        depth = 2
+    else:
+        depth = 3
 
     best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
     best_moves = []
 
     for move in board.legal_moves:
         board.push(move)
-        score = alphabeta(board, 3, -float('inf'), float('inf'), not board.turn)
+        score = alphabeta(board, depth, -float('inf'), float('inf'), not board.turn)
         board.pop()
 
         if board.turn == chess.WHITE:
@@ -175,6 +182,8 @@ def choose_move(board):
 
 def main():
     board = chess.Board()
+    wtime = btime = 60000  # default time in ms
+
     while True:
         line = sys.stdin.readline()
         if not line:
@@ -182,7 +191,7 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 1.4")
+            print("id name SmileyMate version 2.1")
             print("id author Classic")
             print("uciok")
         elif line == "isready":
@@ -208,7 +217,15 @@ def main():
                     for mv in moves:
                         board.push_uci(mv)
         elif line.startswith("go"):
-            move = choose_move(board)
+            parts = line.split()
+            for i in range(len(parts)):
+                if parts[i] == "wtime":
+                    wtime = int(parts[i + 1])
+                elif parts[i] == "btime":
+                    btime = int(parts[i + 1])
+
+            time_left = wtime if board.turn == chess.WHITE else btime
+            move = choose_move(board, time_left)
             if move is not None:
                 print("bestmove", move.uci())
             else:
@@ -220,5 +237,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-               
