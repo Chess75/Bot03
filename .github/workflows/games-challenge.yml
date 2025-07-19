@@ -9,7 +9,7 @@ jobs:
     env:
       LICHESS_TOKEN: ${{ secrets.LICHESS_TOKEN }}
       MAX_GAMES: 3
-      RATED: false  # или true, если хочешь рейтингово
+      RATED: true  # или true, если хочешь рейтингово
 
     steps:
       - name: Checkout code
