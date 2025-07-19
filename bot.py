@@ -1,16 +1,19 @@
-import berserk
-import requests
+import os
 import time
 import random
+import requests
+import json
+import berserk
 
-# ==== НАСТРОЙКИ ====
-API_TOKEN = "lip_jye4gOUEzRM0VPGiBwHp"
-USERNAME = "Newchessengine-ai"
-OPPONENT = "maia1"
-MAX_GAMES = 5
-CHECK_INTERVAL = 10  # секунд между проверками
+# ==== Настройки через переменные окружения ====
+API_TOKEN = os.getenv("LICHESS_TOKEN")
+USERNAME = os.getenv("LICHESS_USERNAME", "Newchessengine-ai")
+OPPONENT = os.getenv("LICHESS_OPPONENT", "maia1")
+MAX_GAMES = int(os.getenv("MAX_GAMES", 3))
+RATED = os.getenv("RATED", "false").lower() == "true"
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 10))
 
-# Список тайм-контролей (в секундах)
+# ==== Тайм-контроли (секунды) ====
 TIME_CONTROLS = [
     (1800, 0),   # 30+0
     (1800, 30),  # 30+30
@@ -26,73 +29,71 @@ TIME_CONTROLS = [
     (120, 1)     # 2+1
 ]
 
-# ==== ИНИЦИАЛИЗАЦИЯ ====
+# ==== Инициализация клиента berserk ====
 session = berserk.TokenSession(API_TOKEN)
 client = berserk.Client(session=session)
 
-# ==== ФУНКЦИИ ====
-
 def get_active_game_count():
+    """Получает количество активных игр пользователя"""
     url = f"https://lichess.org/api/games/user/{USERNAME}"
     headers = {
         "Authorization": f"Bearer {API_TOKEN}",
-        "Accept": "application/x-ndjson"  # запрос JSON-потока
+        "Accept": "application/x-ndjson"
     }
     params = {
         "max": 50,
         "ongoing": "true"
     }
+
     try:
         response = requests.get(url, headers=headers, params=params, stream=True)
         response.raise_for_status()
 
         count = 0
-        import json
         for line in response.iter_lines():
             if not line:
                 continue
             try:
                 game_data = json.loads(line)
+                if game_data.get("status") == "started":
+                    count += 1
             except json.JSONDecodeError:
                 continue
-            if game_data.get("status") == "started":
-                count += 1
 
-        print(f"[INFO] Найдено активных игр: {count}")
+        print(f"[INFO] Активных игр найдено: {count}")
         return count
-
     except Exception as e:
         print(f"[ERROR] Не удалось получить список игр: {e}")
         return 0
 
-
-
-def challenge_maia():
-    """Кидает вызов @maia1 с рандомным контролем времени"""
+def challenge_opponent():
+    """Кидает вызов сопернику с рандомным контролем"""
     clock_limit, clock_increment = random.SystemRandom().choice(TIME_CONTROLS)
-    print(f"[INFO] Отправка ВЫЗОВА @maia1 с контролем: {clock_limit // 60}+{clock_increment} (rated=True)")
+    print(f"[INFO] Отправка вызова @{OPPONENT} {clock_limit // 60}+{clock_increment} | rated={RATED}")
+
     try:
         client.challenges.create(
             OPPONENT,
-            rated=True,  # <-- здесь теперь True
+            rated=RATED,
             clock_limit=clock_limit,
             clock_increment=clock_increment,
             color="random",
             variant="standard"
         )
     except Exception as e:
-        print(f"[ERROR] Ошибка при вызове: {e}")
-
-# ==== ОСНОВНОЙ ЦИКЛ ====
+        print(f"[ERROR] Ошибка при отправке вызова: {e}")
 
 def main():
     while True:
         active_games = get_active_game_count()
         if active_games < MAX_GAMES:
-            challenge_maia()
+            challenge_opponent()
         else:
-            print(f"[INFO] У бота уже {active_games} игр. Ждём...")
+            print(f"[INFO] У игрока уже {active_games} игр — ждём...")
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
-    main()
+    if not API_TOKEN:
+        print("[FATAL] Не задан LICHESS_TOKEN! Установи его в Secrets или переменных окружения.")
+    else:
+        main()
