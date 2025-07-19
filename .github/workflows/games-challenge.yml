@@ -1,7 +1,9 @@
 name: Run Lichess Bot
 
 on:
-  workflow_dispatch:  # <== добавляет кнопку "Run workflow"
+  workflow_dispatch:  # ручной запуск
+  schedule:
+    - cron: '0 */5 * * *'  # запуск каждые 5 часов (в начале часа)
 
 jobs:
   run-bot:
