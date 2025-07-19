@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LICHESS_TOKEN: ${{ secrets.LICHESS_TOKEN }}
-      MAX_GAMES: 3  # можешь тут изменить
+      MAX_GAMES: 5  # можешь тут изменить
 
     steps:
       - name: Checkout code
