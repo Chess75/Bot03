@@ -7,7 +7,7 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     env:
-      LICHESS_TOKEN: ${{ secrets.LICHESS_TOKEN }}
+      LICHESS_TOKEN: ${{ secrets.TOKEN }}
       MAX_GAMES: 3
       RATED: true  # или true, если хочешь рейтингово
 
