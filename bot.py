@@ -6,7 +6,7 @@ import json
 import berserk
 
 # ==== Настройки через переменные окружения ====
-API_TOKEN = os.getenv("TOKEN")
+API_TOKEN = os.getenv("TOKEN") or os.getenv("LICHESS_TOKEN")
 USERNAME = os.getenv("LICHESS_USERNAME", "Newchessengine-ai")
 OPPONENT = os.getenv("LICHESS_OPPONENT", "maia1")
 MAX_GAMES = int(os.getenv("MAX_GAMES", 3))
