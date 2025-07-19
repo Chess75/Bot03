@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LICHESS_TOKEN: ${{ secrets.TOKEN }}
-      MAX_GAMES: 3
+      MAX_GAMES: 6
       RATED: true  # или true, если хочешь рейтингово
 
     steps:
