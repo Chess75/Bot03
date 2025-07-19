@@ -9,7 +9,7 @@ import berserk
 API_TOKEN = os.getenv("TOKEN") or os.getenv("LICHESS_TOKEN")
 USERNAME = os.getenv("LICHESS_USERNAME", "Newchessengine-ai")
 OPPONENT = os.getenv("LICHESS_OPPONENT", "maia1")
-MAX_GAMES = int(os.getenv("MAX_GAMES", 6))
+MAX_GAMES = int(os.getenv("MAX_GAMES", 3))
 RATED = os.getenv("RATED", "false").lower() == "true"
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 10))
 
