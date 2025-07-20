@@ -85,23 +85,39 @@ def get_active_game_count():
             return 0
 
 def challenge_opponent():
-    """Кидает вызов сопернику с рандомным контролем"""
+    """Кидает вызов сопернику с рандомным контролем, с обработкой ошибок и повторными попытками"""
     clock_limit, clock_increment = random.SystemRandom().choice(TIME_CONTROLS)
     print(f"[INFO] Отправка вызова @{OPPONENT} {clock_limit //60}+{clock_increment} | rated={RATED}")
 
-    try:
-        client.challenges.create(
-            OPPONENT,
-            rated=RATED,
-            clock_limit=clock_limit,
-            clock_increment=clock_increment,
-            color="random",
-            variant="standard"
-        )
-        print(f"[INFO] Вызов отправлен @{OPPONENT}")
-        
-    except Exception as e:
-        print(f"[ERROR] Ошибка при отправке вызова: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Перед отправкой делаем небольшую задержку
+            time.sleep(1)
+
+            client.challenges.create(
+                OPPONENT,
+                rated=RATED,
+                clock_limit=clock_limit,
+                clock_increment=clock_increment,
+                color="random",
+                variant="standard"
+            )
+            print(f"[INFO] Вызов отправлен @{OPPONENT}")
+            break  # успешно, выходим из цикла
+
+        except berserk.exceptions.HTTPError as e:
+            status_code = e.status_code if hasattr(e, 'status_code') else None
+            if status_code == 429:
+                wait_time = (2 ** attempt) * 10  # экспоненциальная задержка
+                print(f"[WARNING] Получен ответ 429. Ждем {wait_time} секунд перед повтором...")
+                time.sleep(wait_time)
+            else:
+                print(f"[ERROR] Ошибка при отправке вызова: {e}")
+                break
+        except Exception as e:
+            print(f"[ERROR] Не удалось отправить вызов: {e}")
+            break
 
 def main():
     while True:
