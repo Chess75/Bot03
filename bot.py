@@ -92,7 +92,7 @@ def challenge_opponent():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Перед отправкой делаем небольшую задержку
+            # Небольшая задержка перед попыткой
             time.sleep(1)
 
             client.challenges.create(
@@ -105,6 +105,19 @@ def challenge_opponent():
             )
             print(f"[INFO] Вызов отправлен @{OPPONENT}")
             break  # успешно, выходим из цикла
+
+        except berserk.exceptions.ResponseError as e:
+            # Проверяем код ошибки
+            if e.status_code == 429:
+                wait_time = (2 ** attempt) * 10  # экспоненциальная задержка
+                print(f"[WARNING] Получен ответ 429. Ждем {wait_time} секунд перед повтором...")
+                time.sleep(wait_time)
+            else:
+                print(f"[ERROR] Ошибка при отправке вызова: {e}")
+                break
+        except Exception as e:
+            print(f"[ERROR] Не удалось отправить вызов: {e}")
+            break
 
         except berserk.exceptions.HTTPError as e:
             status_code = e.status_code if hasattr(e, 'status_code') else None
