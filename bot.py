@@ -34,7 +34,7 @@ session = berserk.TokenSession(API_TOKEN)
 client = berserk.Client(session=session)
 
 def get_active_game_count():
-    """Получает количество активных игр пользователя"""
+    """Получает количество активных игр пользователя с обработкой ошибок и лимитами"""
     url = f"https://lichess.org/api/games/user/{USERNAME}"
     headers = {
         "Authorization": f"Bearer {API_TOKEN}",
@@ -45,31 +45,49 @@ def get_active_game_count():
         "ongoing": "true"
     }
 
-    try:
-        response = requests.get(url, headers=headers, params=params, stream=True)
-        response.raise_for_status()
+    max_attempts = 5
 
-        count = 0
-        for line in response.iter_lines():
-            if not line:
-                continue
-            try:
-                game_data = json.loads(line)
-                if game_data.get("status") == "started":
-                    count += 1
-            except json.JSONDecodeError:
-                continue
+    for attempt in range(max_attempts):
+        try:
+            response = requests.get(url, headers=headers, params=params, stream=True)
+            response.raise_for_status()
 
-        print(f"[INFO] Активных игр найдено: {count}")
-        return count
-    except Exception as e:
-        print(f"[ERROR] Не удалось получить список игр: {e}")
-        return 0
+            count = 0
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    game_data = json.loads(line)
+                    if game_data.get("status") == "started":
+                        count += 1
+                except json.JSONDecodeError:
+                    continue
+
+            print(f"[INFO] Активных игр найдено: {count}")
+            return count
+
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response else None
+            if status_code == 429:
+                wait_time = (2 ** attempt) * 10  # экспоненциальная задержка: от 10 до ~160 секунд
+                print(f"[WARNING] Получен ответ 429. Ждем {wait_time} секунд перед повтором...")
+                time.sleep(wait_time)
+            else:
+                print(f"[ERROR] HTTP ошибка: {e}")
+                break
+        except Exception as e:
+            print(f"[ERROR] Не удалось получить список игр: {e}")
+            break
+
+        # Если не удалось получить данные после всех попыток — возвращаем ноль.
+        if attempt == max_attempts -1:
+            print("[ERROR] Превышено число попыток получения данных.")
+            return 0
 
 def challenge_opponent():
     """Кидает вызов сопернику с рандомным контролем"""
     clock_limit, clock_increment = random.SystemRandom().choice(TIME_CONTROLS)
-    print(f"[INFO] Отправка вызова @{OPPONENT} {clock_limit // 60}+{clock_increment} | rated={RATED}")
+    print(f"[INFO] Отправка вызова @{OPPONENT} {clock_limit //60}+{clock_increment} | rated={RATED}")
 
     try:
         client.challenges.create(
@@ -80,6 +98,8 @@ def challenge_opponent():
             color="random",
             variant="standard"
         )
+        print(f"[INFO] Вызов отправлен @{OPPONENT}")
+        
     except Exception as e:
         print(f"[ERROR] Ошибка при отправке вызова: {e}")
 
@@ -95,5 +115,6 @@ def main():
 if __name__ == "__main__":
     if not API_TOKEN:
         print("[FATAL] Не задан LICHESS_TOKEN! Установи его в Secrets или переменных окружения.")
+        exit(1)
     else:
         main()
