@@ -1,17 +1,19 @@
 name: Run Lichess Bot
 
 on:
-  workflow_dispatch:  # ручной запуск
+  workflow_dispatch:  # Кнопка "Run workflow"
   schedule:
-    - cron: '0 */5 * * *'  # запуск каждые 5 часов (в начале часа)
+    - cron: "*/15 * * * *"  # Запуск каждые 15 минут
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     env:
-      LICHESS_TOKEN: ${{ secrets.TOKEN }}
+      TOKEN: ${{ secrets.TOKEN }}                # ⬅️ Токен от lichess
+      LICHESS_USERNAME: "Newchessengine-ai"      # ⬅️ Твоё имя
       MAX_GAMES: 3
-      RATED: true  # или true, если хочешь рейтингово
+      RATED: true                                 # true = рейтинг, false = обычная
+      CHECK_INTERVAL: 15                         # секунд между проверками
 
     steps:
       - name: Checkout code
@@ -26,5 +28,5 @@ jobs:
         run: |
           pip install berserk requests
 
-      - name: Run the bot
+      - name: Run Lichess Bot
         run: python bot.py
