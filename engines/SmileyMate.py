@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import sys
 import chess
-import time
 import random
+import time
 
 piece_values = {
     chess.PAWN: 100,
@@ -13,132 +13,167 @@ piece_values = {
     chess.KING: 0
 }
 
-pst_mg = {
-    chess.PAWN: [...],  # Вставим таблицы из предыдущего ответа
-    chess.KNIGHT: [...],
-    chess.BISHOP: [...],
-    chess.ROOK: [...],
-    chess.QUEEN: [...],
-    chess.KING: [...]
+# Piece-square tables
+pst = {
+    chess.PAWN: [
+         0,  0,  0,  0,  0,  0,  0,  0,
+         5, 10, 10,-20,-20, 10, 10,  5,
+         5, -5,-10,  0,  0,-10, -5,  5,
+         0,  0,  0, 20, 20,  0,  0,  0,
+         5,  5, 10, 25, 25, 10,  5,  5,
+        10, 10, 20, 30, 30, 20, 10, 10,
+        50, 50, 50, 50, 50, 50, 50, 50,
+         0,  0,  0,  0,  0,  0,  0,  0,
+    ],
+    chess.KNIGHT: [
+        -50,-40,-30,-30,-30,-30,-40,-50,
+        -40,-20,  0,  5,  5,  0,-20,-40,
+        -30,  5, 10, 15, 15, 10,  5,-30,
+        -30,  0, 15, 20, 20, 15,  0,-30,
+        -30,  5, 15, 20, 20, 15,  5,-30,
+        -30,  0, 10, 15, 15, 10,  0,-30,
+        -40,-20,  0,  0,  0,  0,-20,-40,
+        -50,-40,-30,-30,-30,-30,-40,-50,
+    ],
+    chess.BISHOP: [
+        -20,-10,-10,-10,-10,-10,-10,-20,
+        -10,  5,  0,  0,  0,  0,  5,-10,
+        -10, 10, 10, 10, 10, 10, 10,-10,
+        -10,  0, 10, 10, 10, 10,  0,-10,
+        -10,  5,  5, 10, 10,  5,  5,-10,
+        -10,  0,  5, 10, 10,  5,  0,-10,
+        -10,  0,  0,  0,  0,  0,  0,-10,
+        -20,-10,-10,-10,-10,-10,-10,-20,
+    ],
+    chess.ROOK: [
+         0,  0,  0,  0,  0,  0,  0,  0,
+         5, 10, 10, 10, 10, 10, 10,  5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+         0,  0,  0,  5,  5,  0,  0,  0,
+    ],
+    chess.QUEEN: [
+        -20,-10,-10, -5, -5,-10,-10,-20,
+        -10,  0,  0,  0,  0,  0,  0,-10,
+        -10,  0,  5,  5,  5,  5,  0,-10,
+         -5,  0,  5,  5,  5,  5,  0, -5,
+          0,  0,  5,  5,  5,  5,  0, -5,
+        -10,  5,  5,  5,  5,  5,  0,-10,
+        -10,  0,  5,  0,  0,  0,  0,-10,
+        -20,-10,-10, -5, -5,-10,-10,-20,
+    ],
+    chess.KING: [
+        -30,-40,-40,-50,-50,-40,-40,-30,
+        -30,-40,-40,-50,-50,-40,-40,-30,
+        -30,-40,-40,-50,-50,-40,-40,-30,
+        -30,-40,-40,-50,-50,-40,-40,-30,
+        -20,-30,-30,-40,-40,-30,-30,-20,
+        -10,-20,-20,-20,-20,-20,-20,-10,
+         20, 20,  0,  0,  0,  0, 20, 20,
+         20, 30, 10,  0,  0, 10, 30, 20,
+    ]
 }
-
-pst_eg_king = [...]  # Таблица эндшпиля для короля
-
-center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
-transposition_table = {}
-pv_table = {}
-
-def is_endgame(board):
-    queens = len(board.pieces(chess.QUEEN, chess.WHITE)) + len(board.pieces(chess.QUEEN, chess.BLACK))
-    minors_majors = sum(len(board.pieces(pt, True)) + len(board.pieces(pt, False))
-                        for pt in [chess.ROOK, chess.BISHOP, chess.KNIGHT])
-    return queens == 0 or minors_majors <= 6
-
-def square_area(square, radius):
-    file = chess.square_file(square)
-    rank = chess.square_rank(square)
-    return [chess.square(f, r) for df in range(-radius, radius + 1)
-            for dr in range(-radius, radius + 1)
-            if 0 <= (f := file + df) < 8 and 0 <= (r := rank + dr) < 8]
+pst_eg_king = [
+    -50,-30,-30,-30,-30,-30,-30,-50,
+    -30,-20,-10,-10,-10,-10,-20,-30,
+    -30,-10, 20, 30, 30, 20,-10,-30,
+    -30,-10, 30, 40, 40, 30,-10,-30,
+    -30,-10, 30, 40, 40, 30,-10,-30,
+    -30,-10, 20, 30, 30, 20,-10,-30,
+    -30,-30,  0,  0,  0,  0,-30,-30,
+    -50,-30,-30,-30,-30,-30,-30,-50
+]
 
 def evaluate_board(board):
     if board.is_checkmate():
-        return -100000 if board.turn else 100000
+        return -99999 if board.turn else 99999
     if board.is_stalemate() or board.is_insufficient_material():
         return 0
 
     score = 0
-    endgame = is_endgame(board)
-
+    phase = 0
     for piece_type in piece_values:
-        for square in board.pieces(piece_type, chess.WHITE):
-            score += piece_values[piece_type]
-            if piece_type in pst_mg:
-                table = pst_eg_king if piece_type == chess.KING and endgame else pst_mg[piece_type]
-                score += table[square]
-        for square in board.pieces(piece_type, chess.BLACK):
-            score -= piece_values[piece_type]
-            if piece_type in pst_mg:
-                table = pst_eg_king if piece_type == chess.KING and endgame else pst_mg[piece_type]
-                score -= table[chess.square_mirror(square)]
+        wp = board.pieces(piece_type, chess.WHITE)
+        bp = board.pieces(piece_type, chess.BLACK)
+        score += (len(wp) - len(bp)) * piece_values[piece_type]
+        for sq in wp:
+            pst_table = pst[piece_type]
+            score += pst_table[sq]
+        for sq in bp:
+            pst_table = pst[piece_type]
+            score -= pst_table[chess.square_mirror(sq)]
+        phase += len(wp) + len(bp)
 
-    for square in center_squares:
-        piece = board.piece_at(square)
-        if piece:
-            score += 10 if piece.color == chess.WHITE else -10
+    king_mirror = chess.square_mirror(board.king(chess.BLACK))
+    king_white = board.king(chess.WHITE)
 
-    def king_safety(color):
-        king_square = board.king(color)
-        if king_square is None:
-            return -9999
-        attackers = board.attackers(not color, king_square)
-        safe_bonus = sum(5 for sq in square_area(king_square, 1)
-                         if (p := board.piece_at(sq)) and p.color == color)
-        return -20 * len(attackers) + safe_bonus
+    if phase < 12:
+        score += pst_eg_king[king_white]
+        score -= pst_eg_king[king_mirror]
+    else:
+        score += pst[chess.KING][king_white]
+        score -= pst[chess.KING][king_mirror]
 
-    score += king_safety(chess.WHITE)
-    score -= king_safety(chess.BLACK)
+    return score if board.turn else -score
 
-    return score if board.turn == chess.WHITE else -score
+TT = {}
 
-def order_moves(board):
-    moves = list(board.legal_moves)
-    def move_score(move):
-        score = 0
-        if board.is_capture(move):
-            score += 10_000
-        if board.gives_check(move):
-            score += 5_000
-        return score
-    return sorted(moves, key=move_score, reverse=True)
-
-def minimax(board, depth, alpha, beta, pv=[]):
-    key = board.board_fen() + str(depth) + str(board.turn)
-    if key in transposition_table:
-        return transposition_table[key]
+def minimax(board, depth, alpha, beta, pv_line):
+    board_hash = (board.zobrist_hash(), board.turn, depth)
+    if board_hash in TT:
+        return TT[board_hash]
 
     if depth == 0 or board.is_game_over():
-        eval = evaluate_board(board)
-        transposition_table[key] = eval
-        return eval
+        return evaluate_board(board)
 
     best_score = -float('inf')
-    best_line = []
+    best_move = None
 
-    for move in order_moves(board):
+    moves = sorted(board.legal_moves, key=lambda m: board.is_capture(m), reverse=True)
+
+    for move in moves:
         board.push(move)
-        line = []
-        score = -minimax(board, depth - 1, -beta, -alpha, line)
+        pv = []
+        score = -minimax(board, depth - 1, -beta, -alpha, pv)
         board.pop()
 
         if score > best_score:
             best_score = score
-            best_line = [move] + line
+            best_move = move
+            pv_line.clear()
+            pv_line.append(move)
+            pv_line.extend(pv)
+
         alpha = max(alpha, score)
         if alpha >= beta:
             break
 
-    if pv is not None:
-        pv.clear()
-        pv.extend(best_line)
-    transposition_table[key] = best_score
+    TT[board_hash] = best_score
     return best_score
 
 def choose_move(board, time_limit=2.0):
     start_time = time.time()
-    depth = 1
     best_move = None
-    pv = []
+    best_pv = []
 
-    while time.time() - start_time < time_limit:
-        current_pv = []
-        score = minimax(board, depth, -float('inf'), float('inf'), current_pv)
-        if current_pv:
-            best_move = current_pv[0]
-            pv_table[depth] = (score, list(current_pv))
-        depth += 1
+    for depth in range(1, 64):
+        if time.time() - start_time > time_limit:
+            break
+        pv = []
+        minimax(board, depth, -float('inf'), float('inf'), pv)
+        if pv:
+            best_move = pv[0]
+            best_pv = pv
+        if time.time() - start_time > time_limit:
+            break
 
-    return best_move if best_move else random.choice(list(board.legal_moves))
+    if best_move:
+        print("info pv", ' '.join(m.uci() for m in best_pv))
+        return best_move
+    return random.choice(list(board.legal_moves))
 
 def main():
     board = chess.Board()
@@ -149,7 +184,7 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate++")
+            print("id name SmileyMate")
             print("id author Classic")
             print("uciok")
         elif line == "isready":
@@ -157,20 +192,17 @@ def main():
         elif line.startswith("ucinewgame"):
             board.reset()
         elif line.startswith("position"):
-            parts = line.split(" ")
+            parts = line.split()
             if "startpos" in parts:
                 board.reset()
-                if "moves" in parts:
-                    moves = parts[parts.index("moves") + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
+                moves = parts[parts.index("moves") + 1:] if "moves" in parts else []
             elif "fen" in parts:
-                fen = " ".join(parts[parts.index("fen") + 1:parts.index("moves")] if "moves" in parts else parts[parts.index("fen") + 1:])
+                idx = parts.index("fen")
+                fen = " ".join(parts[idx + 1:idx + 7])
                 board.set_fen(fen)
-                if "moves" in parts:
-                    moves = parts[parts.index("moves") + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
+                moves = parts[parts.index("moves") + 1:] if "moves" in parts else []
+            for mv in moves:
+                board.push_uci(mv)
         elif line.startswith("go"):
             tokens = line.split()
             wtime = btime = None
@@ -178,19 +210,12 @@ def main():
                 wtime = int(tokens[tokens.index("wtime") + 1]) / 1000.0
             if "btime" in tokens:
                 btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
-
             current_time = wtime if board.turn == chess.WHITE else btime
             think_time = min(current_time * 0.02, 2.0) if current_time else 2.0
 
             move = choose_move(board, think_time)
-            if move:
-                board.push(move)
-                score = evaluate_board(board)
-                board.pop()
-                print(f"info score cp {score} pv {' '.join(m.uci() for m in pv_table.get(max(pv_table, default=0), (0, []))[1])}")
-                print("bestmove", move.uci())
-            else:
-                print("bestmove 0000")
+            print(f"bestmove {move.uci()}")
+            board.push(move)
         elif line == "quit":
             break
         sys.stdout.flush()
