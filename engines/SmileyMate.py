@@ -139,18 +139,30 @@ class Engine:
             black_score += len(board.pieces(piece_type, chess.BLACK)) * values[piece_type]
         return white_score - black_score
 
-    def king_safety(self, board):
-        # Simplified king safety: penalty for enemy pieces near king
-        king_square = board.king(board.turn)
-        enemy_color = not board.turn
-        penalty = 0
-        if king_square is None:
-            return penalty
-        for sq in chess.SquareSet(chess.square_ring(king_square)):
-            piece = board.piece_at(sq)
-            if piece and piece.color == enemy_color:
-                penalty -= 20
+   def king_safety(self, board):
+    # Simplified king safety: penalty for enemy pieces near king
+    king_square = board.king(board.turn)
+    enemy_color = not board.turn
+    penalty = 0
+    if king_square is None:
         return penalty
+
+    king_file = chess.square_file(king_square)
+    king_rank = chess.square_rank(king_square)
+
+    for df in [-1, 0, 1]:
+        for dr in [-1, 0, 1]:
+            if df == 0 and dr == 0:
+                continue
+            f = king_file + df
+            r = king_rank + dr
+            if 0 <= f <= 7 and 0 <= r <= 7:
+                sq = chess.square(f, r)
+                piece = board.piece_at(sq)
+                if piece and piece.color == enemy_color:
+                    penalty -= 20
+    return penalty
+
 
     def search(self, board, depth, alpha, beta):
         if time.time() - self.start_time > self.time_limit:
