@@ -7,7 +7,7 @@ import time
 piece_values = {
     chess.PAWN: 100,
     chess.KNIGHT: 320,
-    chess.BISHOP: 340,
+    chess.BISHOP: 330,
     chess.ROOK: 500,
     chess.QUEEN: 900,
     chess.KING: 0
@@ -136,9 +136,14 @@ def pawn_structure(board):
             is_passed = True
             for f in [file - 1, file, file + 1]:
                 if 0 <= f <= 7:
-                    for r in range(rank + 1, 8) if color == chess.WHITE else range(0, rank):
+                    if color == chess.WHITE:
+                        ranks_to_check = range(rank + 1, 8)
+                    else:
+                        ranks_to_check = range(0, rank)
+                    for r in ranks_to_check:
                         sq_check = chess.square(f, r)
-                        if board.piece_at(sq_check) == chess.Piece(chess.PAWN, not color):
+                        piece = board.piece_at(sq_check)
+                        if piece == chess.Piece(chess.PAWN, not color):
                             is_passed = False
             if is_passed:
                 score += 30 if color == chess.WHITE else -30
@@ -150,164 +155,143 @@ def king_safety(board, color):
     for attacker_sq in board.attackers(not color, king_sq):
         piece = board.piece_at(attacker_sq)
         if piece:
-            danger += attack_unit.get(piece.piece_type, 0)
-    return -danger * 10
+            danger += attack_unit.get(piece.piece_type, 1)
+    return -danger * 10 if color == chess.WHITE else danger * 10
 
-def move_score(move, board):
-    if board.is_capture(move):
-        victim = board.piece_at(move.to_square)
-        attacker = board.piece_at(move.from_square)
-        if victim and attacker:
-            return 10 * piece_values[victim.piece_type] - piece_values[attacker.piece_type]
-    if board.gives_check(move):
-        return 50
-    return 0
+def order_moves(board, moves):
+    def score_move(move):
+        if board.is_capture(move):
+            captured_piece = board.piece_at(move.to_square)
+            attacker = board.piece_at(move.from_square)
+            if captured_piece and attacker:
+                return 10 * piece_values[captured_piece.piece_type] - piece_values[attacker.piece_type]
+        if board.gives_check(move):
+            return 5
+        return 0
+    return sorted(moves, key=score_move, reverse=True)
 
-def order_moves(board):
-    return sorted(board.legal_moves, key=lambda m: move_score(m, board), reverse=True)
-
-def quiescence(board, alpha, beta, color):
-    stand_pat = color * evaluate_board(board)
+def quiescence(board, alpha, beta):
+    stand_pat = evaluate_board(board)
     if stand_pat >= beta:
         return beta
     if alpha < stand_pat:
         alpha = stand_pat
 
-    for move in board.legal_moves:
-        if board.is_capture(move):
+    for move in order_moves(board, board.legal_moves):
+        if board.is_capture(move) or board.gives_check(move):
             board.push(move)
-            score = -quiescence(board, -beta, -alpha, -color)
+            score = -quiescence(board, -beta, -alpha)
             board.pop()
+
             if score >= beta:
                 return beta
             if score > alpha:
                 alpha = score
     return alpha
 
-def negamax(board, depth, alpha, beta, color):
-    key = (board.fen(), depth)
-    if key in transposition_table:
-        return transposition_table[key]
+def negamax(board, depth, alpha, beta, start_time, time_limit):
+    if depth == 0 or board.is_game_over():
+        return quiescence(board, alpha, beta)
 
-    if depth == 0:
-        return quiescence(board, alpha, beta, color)
+    if time.time() - start_time > time_limit:
+        raise TimeoutError()
 
     max_eval = -float('inf')
-    for move in order_moves(board):
+    moves = order_moves(board, board.legal_moves)
+    for move in moves:
         board.push(move)
-        eval = -negamax(board, depth - 1, -beta, -alpha, -color)
+        try:
+            eval = -negamax(board, depth - 1, -beta, -alpha, start_time, time_limit)
+        except TimeoutError:
+            board.pop()
+            raise
         board.pop()
+
+        if eval >= beta:
+            return beta
         if eval > max_eval:
             max_eval = eval
-        if max_eval > alpha:
-            alpha = max_eval
-        if alpha >= beta:
-            break
-
-    transposition_table[key] = max_eval
+        if eval > alpha:
+            alpha = eval
     return max_eval
 
-def choose_move(board, time_limit=2.0):
-    start_time = time.time()
-    color = 1 if board.turn == chess.WHITE else -1
-
-    if time_limit > 20:
-        max_depth = 6
-    elif time_limit > 15:
-        max_depth = 5
-    elif time_limit > 10:
-        max_depth = 4
-    elif time_limit > 5:
-        max_depth = 2
-    else:
-        max_depth = 1
-
+def select_move(board, max_depth, time_limit):
     best_move = None
     best_score = -float('inf')
-    depth = 1
+    start_time = time.time()
+    moves = order_moves(board, board.legal_moves)
 
-    while depth <= max_depth and time.time() - start_time < time_limit:
-        current_best = None
-        current_best_score = -float('inf')
-
-        for move in order_moves(board):
-            board.push(move)
-            score = -negamax(board, depth, -float('inf'), float('inf'), -color)
+    for move in moves:
+        board.push(move)
+        try:
+            score = -negamax(board, max_depth - 1, -float('inf'), float('inf'), start_time, time_limit)
+        except TimeoutError:
             board.pop()
-
-            if score > current_best_score:
-                current_best_score = score
-                current_best = move
-
-        if current_best:
-            best_score = current_best_score
-            best_move = current_best
-
-        depth += 1
-
+            break
+        board.pop()
+        if score > best_score:
+            best_score = score
+            best_move = move
+        if time.time() - start_time > time_limit:
+            break
     return best_move if best_move else random.choice(list(board.legal_moves))
+
+def parse_go_command(command):
+    # Пример строки: go wtime 300000 btime 300000 winc 0 binc 0 movestogo 40
+    tokens = command.strip().split()
+    info = {}
+    for i in range(len(tokens)):
+        if tokens[i] in ('wtime', 'btime', 'winc', 'binc', 'movestogo'):
+            try:
+                info[tokens[i]] = int(tokens[i+1])
+            except:
+                info[tokens[i]] = 0
+    return info
 
 def main():
     board = chess.Board()
-
+    max_depth = 3
     while True:
-        line = sys.stdin.readline()
-        if not line:
-            break
-        line = line.strip()
-
-        if line == "uci":
-            print("id name SmileyMate")
-            print("id author Classic")
-            print("uciok")
-        elif line == "isready":
-            print("readyok")
-        elif line.startswith("ucinewgame"):
-            board.reset()
-        elif line.startswith("position"):
-            parts = line.split(" ")
-            if "startpos" in parts:
-                board.reset()
-                if "moves" in parts:
-                    moves = parts[parts.index("moves") + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
-            elif "fen" in parts:
-                fen_index = parts.index("fen")
-                fen_str = " ".join(parts[fen_index + 1:fen_index + 7])
-                board.set_fen(fen_str)
-                if "moves" in parts:
-                    moves = parts[parts.index("moves") + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
-        elif line.startswith("go"):
-            tokens = line.split()
-            wtime = btime = None
-            if "wtime" in tokens:
-                wtime = int(tokens[tokens.index("wtime") + 1]) / 1000.0
-            if "btime" in tokens:
-                btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
-
-            current_time = wtime if board.turn == chess.WHITE else btime
-            think_time = min(current_time * 0.02, 1.0) if current_time else 1.0
-
-            start_time = time.time()
-            move = choose_move(board, current_time or 2.0)
-            elapsed = int((time.time() - start_time) * 1000)
-
-            if move:
-                board.push(move)
-                eval_score = evaluate_board(board)
-                board.pop()
-                print(f"info score cp {eval_score} time {elapsed}")
-                print("bestmove", move.uci())
+        line = sys.stdin.readline().strip()
+        if line == 'uci':
+            print('id name SmileyMate')
+            print('id author Classic')
+            print('uciok')
+        elif line == 'isready':
+            print('readyok')
+        elif line.startswith('position'):
+            if 'startpos' in line:
+                board.set_fen(chess.STARTING_FEN)
+                moves_str = line.split('moves ')[1] if 'moves ' in line else ''
+                moves = moves_str.split()
+                for move in moves:
+                    board.push_uci(move)
+            elif 'fen' in line:
+                fen = line.split('fen ')[1].split(' moves')[0]
+                board.set_fen(fen)
+                if 'moves ' in line:
+                    moves_str = line.split('moves ')[1]
+                    moves = moves_str.split()
+                    for move in moves:
+                        board.push_uci(move)
+        elif line.startswith('go'):
+            go_info = parse_go_command(line)
+            # Выбираем время для хода, например 10% от оставшегося времени или максимум 2 секунды
+            if board.turn == chess.WHITE:
+                time_left = go_info.get('wtime', 60000)
+                inc = go_info.get('winc', 0)
             else:
-                print("bestmove 0000")
-        elif line == "quit":
+                time_left = go_info.get('btime', 60000)
+                inc = go_info.get('binc', 0)
+
+            # Минимальное время хода 0.1 сек, максимум 2 сек или 10% от оставшегося времени
+            allocated_time = max(0.1, min(2.0, (time_left / 1000) * 0.1 + inc / 1000))
+
+            move = select_move(board, max_depth, allocated_time)
+            print(f'bestmove {move.uci()}')
+            sys.stdout.flush()
+        elif line == 'quit':
             break
 
-        sys.stdout.flush()
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
-
