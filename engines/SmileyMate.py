@@ -1,223 +1,192 @@
-#!/usr/bin/env python3
-import sys
 import chess
-import random
+import chess.polyglot
 import time
+import random
+from collections import defaultdict
 
-piece_values = {
-    chess.PAWN: 100,
-    chess.KNIGHT: 320,
-    chess.BISHOP: 330,
-    chess.ROOK: 500,
-    chess.QUEEN: 900,
-    chess.KING: 0
-}
+MAX_ENGINE_DEPTH = 20
+UPPERBOUND_FLAG = 1
+LOWERBOUND_FLAG = 2
+EXACT_FLAG = 3
 
-# Примерные piece-square таблицы (упрощённые)
-piece_square_tables = {
-    chess.PAWN: [
-        0, 0, 0, 0, 0, 0, 0, 0,
-        5, 10, 10, -20, -20, 10, 10, 5,
-        5, -5, -10, 0, 0, -10, -5, 5,
-        0, 0, 0, 20, 20, 0, 0, 0,
-        5, 5, 10, 25, 25, 10, 5, 5,
-        10, 10, 20, 30, 30, 20, 10, 10,
-        50, 50, 50, 50, 50, 50, 50, 50,
-        0, 0, 0, 0, 0, 0, 0, 0
-    ],
-    chess.KNIGHT: [
-        -50, -40, -30, -30, -30, -30, -40, -50,
-        -40, -20, 0, 5, 5, 0, -20, -40,
-        -30, 5, 10, 15, 15, 10, 5, -30,
-        -30, 0, 15, 20, 20, 15, 0, -30,
-        -30, 5, 15, 20, 20, 15, 5, -30,
-        -30, 0, 10, 15, 15, 10, 0, -30,
-        -40, -20, 0, 0, 0, 0, -20, -40,
-        -50, -40, -30, -30, -30, -30, -40, -50,
-    ],
-    chess.BISHOP: [
-        -20, -10, -10, -10, -10, -10, -10, -20,
-        -10, 5, 0, 0, 0, 0, 5, -10,
-        -10, 10, 10, 10, 10, 10, 10, -10,
-        -10, 0, 10, 10, 10, 10, 0, -10,
-        -10, 5, 5, 10, 10, 5, 5, -10,
-        -10, 0, 5, 10, 10, 5, 0, -10,
-        -10, 0, 0, 0, 0, 0, 0, -10,
-        -20, -10, -10, -10, -10, -10, -10, -20,
-    ],
-    # Можно добавить другие фигуры...
-}
+player_coefs = {True: 1, False: -1}
 
-center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
+# Заглушки для переменных и функций, которые у тебя, предположительно, где-то определены
+transposition_table = None  # Нужно определить класс и инициализировать
+pawn_hash_table = None      # Аналогично
+killer_moves = defaultdict(list)
+history_table = [[0 for _ in range(64)] for _ in range(64)]
+nodes_searched = 0
+is_in_endgame = False
+piece_square_tables = {}
+king_mg_pst = None
+king_eg_pst = None
+pawn_eg_pst = None
+PATH_TO_OPENING_BOOK = None
 
-def square_area(square, radius):
-    file = chess.square_file(square)
-    rank = chess.square_rank(square)
-    area = []
-    for df in range(-radius, radius + 1):
-        for dr in range(-radius, radius + 1):
-            f = file + df
-            r = rank + dr
-            if 0 <= f < 8 and 0 <= r < 8:
-                area.append(chess.square(f, r))
-    return area
+def nega_max(pos, depth, alpha=float('-inf'), beta=float('inf'), color=1, time_stop=None, initial_depth=None, ply=0):
+    global nodes_searched, killer_moves, history_table, transposition_table
 
-def evaluate_board(board):
-    if board.is_checkmate():
-        return -100000 if board.turn else 100000
-    if board.is_stalemate() or board.is_insufficient_material():
-        return 0
+    # Заглушка тела функции, т.к. полного тела не было
+    # Реальная реализация нужна, чтобы двиг работал
+    # Здесь возврат фиктивного значения
+    nodes_searched += 1
+    # Для демонстрации возврат случайного хода из списка легальных ходов
+    legal_moves = list(pos.legal_moves)
+    if not legal_moves:
+        return None, 0  # нет ходов, пат или мат
+    best_move = random.choice(legal_moves)
+    best_score = 0
+    return best_move, best_score
 
-    score = 0
 
-    # Материальное преимущество
-    for piece_type in piece_values:
-        white_pieces = board.pieces(piece_type, chess.WHITE)
-        black_pieces = board.pieces(piece_type, chess.BLACK)
-        score += len(white_pieces) * piece_values[piece_type]
-        score -= len(black_pieces) * piece_values[piece_type]
+def iterative_deepening(
+    pos: chess.Board, max_time: float, max_depth: int = MAX_ENGINE_DEPTH, force_interrupt: bool = True
+) -> chess.Move:
+    """Applies iterative deepening to find the best move in a limited time"""
+    global nodes_searched
+    nodes_searched = 0
 
-    # Позиционная оценка через piece-square tables
-    for piece_type, table in piece_square_tables.items():
-        for square in board.pieces(piece_type, chess.WHITE):
-            score += table[square]
-        for square in board.pieces(piece_type, chess.BLACK):
-            score -= table[chess.square_mirror(square)]
+    t1 = time.time()
+    time_stop = t1 + max_time
+    best_move = None
+    for depth in range(1, max_depth + 1):
+        if depth > 1 and force_interrupt:
+            move, score = nega_max(
+                pos,
+                depth,
+                color=player_coefs[pos.turn],
+                time_stop=time_stop,
+                initial_depth=depth
+            )
+        else:  # NOTE: no timeout limit for depth 1, so best_move is always defined
+            move, score = nega_max(
+                pos,
+                depth,
+                color=player_coefs[pos.turn],
+                initial_depth=depth
+            )
+        if move is not None:  # no timeout during search
+            best_move = move
+            time_elapsed = time.time() - t1
+            info_string = "info"
+            info_string += f" depth {depth}"
+            info_string += (
+                f" score cp {player_coefs[pos.turn] * score}"  # evaluation must be absolute
+            )
+            info_string += f" time {int(time_elapsed)}"
+            info_string += f" nodes {nodes_searched}"
+            try:
+                info_string += f" nps {int(nodes_searched / time_elapsed)}"
+            except ZeroDivisionError:
+                pass
+            print(info_string)
 
-    # Безопасность короля
-    def king_safety(color):
-        king_square = board.king(color)
-        if king_square is None:
-            return -9999
-        danger = 0
-        attackers = board.attackers(not color, king_square)
-        danger -= len(attackers) * 20
-        for square in square_area(king_square, 1):
-            piece = board.piece_at(square)
-            if piece and piece.color == color:
-                danger += 5
-        return danger
-
-    score += king_safety(chess.WHITE)
-    score -= king_safety(chess.BLACK)
-
-    # Контроль центра
-    for square in center_squares:
-        piece = board.piece_at(square)
-        if piece:
-            score += 10 if piece.color == chess.WHITE else -10
-
-    # Мобильность
-    score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
-
-    return score
-
-def minimax(board, depth, alpha, beta):
-    if depth == 0 or board.is_game_over():
-        return evaluate_board(board)
-
-    if board.turn == chess.WHITE:
-        max_eval = -float('inf')
-        for move in board.legal_moves:
-            board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
-            board.pop()
-            max_eval = max(max_eval, eval)
-            alpha = max(alpha, eval)
-            if beta <= alpha:
-                break
-        return max_eval
-    else:
-        min_eval = float('inf')
-        for move in board.legal_moves:
-            board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
-            board.pop()
-            min_eval = min(min_eval, eval)
-            beta = min(beta, eval)
-            if beta <= alpha:
-                break
-        return min_eval
-
-def choose_move(board, time_left=10.0):
-    # Если мало времени — делаем ход моментально
-    if time_left < 6.0:
-        return random.choice(list(board.legal_moves))
-
-    best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
-    best_moves = []
-
-    for move in board.legal_moves:
-        board.push(move)
-        score = minimax(board, 2, -float('inf'), float('inf'))
-        board.pop()
-
-        if board.turn == chess.WHITE:
-            if score > best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-        else:
-            if score < best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-
-    return random.choice(best_moves) if best_moves else None
-
-def main():
-    board = chess.Board()
-    time_left = 60.0  # начальное время (в секундах)
-
-    while True:
-        line = sys.stdin.readline()
-        if not line:
+        if time.time() >= time_stop:
             break
-        line = line.strip()
 
-        if line == "uci":
+    return best_move
+
+
+def in_endgame(board: chess.Board) -> bool:
+    """Заглушка для определения эндшпиля"""
+    # Пример простой проверки - если осталось мало фигур
+    return board.occupied_co[chess.PIECE_TYPES[1]] + board.occupied_co[chess.PIECE_TYPES[2]] < 10
+
+
+def main() -> None:
+    """Main UCI interface"""
+    global killer_moves, history_table, is_in_endgame
+    chess960 = False
+    board = chess.Board()
+    while True:
+        args = input().split()
+        if not args:
+            continue
+        if args[0] == "uci":
             print("id name SmileyMate")
             print("id author Classic")
+            print("option name UCI_Chess960 type check default false")
             print("uciok")
-        elif line == "isready":
+
+        elif args[0] == "isready":
             print("readyok")
-        elif line.startswith("ucinewgame"):
-            board.reset()
-            time_left = 60.0
-        elif line.startswith("position"):
-            parts = line.split(" ")
-            if "startpos" in parts:
-                board.reset()
-                if "moves" in parts:
-                    moves_index = parts.index("moves")
-                    moves = parts[moves_index + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
-            elif "fen" in parts:
-                fen_index = parts.index("fen")
-                fen_str = " ".join(parts[fen_index + 1:fen_index + 7])
-                board.set_fen(fen_str)
-                if "moves" in parts:
-                    moves_index = parts.index("moves")
-                    moves = parts[moves_index + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
-        elif line.startswith("go"):
-            move_start = time.time()
-            move = choose_move(board, time_left)
-            move_end = time.time()
-            time_spent = move_end - move_start
-            time_left = max(0.0, time_left - time_spent)
-            if move is not None:
-                print("bestmove", move.uci())
-            else:
-                print("bestmove 0000")
-        elif line == "quit":
+
+        elif args[0] == "ucinewgame":
+            is_in_endgame = False
+            # Заменить на реальные PST, если есть
+            piece_square_tables[chess.KING] = king_mg_pst
+            transposition_table.reset() if transposition_table else None
+            pawn_hash_table.reset() if pawn_hash_table else None
+            killer_moves = defaultdict(list)
+            history_table = [[0 for _ in range(64)] for _ in range(64)]
+
+        elif args[0] == "quit":
             break
 
-        sys.stdout.flush()
+        elif args[0] == "position":
+            if len(args) == 2 and args[1] == "startpos":
+                board = chess.Board(chess960=chess960)
+            elif args[1] == "fen":
+                board = chess.Board(" ".join(args[2:8]), chess960=chess960)
+                if "moves" in args:
+                    for move_str in args[args.index("moves") + 1:]:
+                        board.push_uci(move_str)
+            elif args[2] == "moves" and args[1] == "startpos":
+                board = chess.Board(chess960=chess960)
+                for move_str in args[3:]:
+                    board.push_uci(move_str)
+
+        elif args[0] == "go":
+            if len(args) == 9:
+                wtime, btime, winc, binc = [int(i) / 1000 for i in args[2::2]]
+                if board.turn == chess.WHITE:
+                    time_left = wtime
+                    increment = winc
+                else:
+                    time_left = btime
+                    increment = binc
+                max_time = min(time_left / 40 + increment, time_left / 2 - 1)
+
+            elif len(args) == 3 and args[1] == "movetime":
+                time_left = None
+                max_time = int(args[2]) / 1000
+
+            else:
+                raise ValueError("unsupported arguments for UCI command 'go'")
+
+            best_move = None
+
+            if PATH_TO_OPENING_BOOK:
+                with chess.polyglot.open_reader(PATH_TO_OPENING_BOOK) as reader:
+                    entries = {}
+                    for entry in reader.find_all(board):
+                        entries[entry.move] = entry.weight
+
+                if entries:
+                    max_weight = max(entries.values())
+                    best_entries = [move for move in entries.keys() if entries[move] == max_weight]
+                    best_move = random.choice(best_entries)
+                    time.sleep(1)  # simulate thinking time
+
+            if best_move is None:
+                if time_left is not None and time_left <= 45:
+                    best_move = iterative_deepening(board, max_time=max_time)
+                else:
+                    best_move = iterative_deepening(board, max_time=max_time * 0.3, force_interrupt=False)
+
+            print(f"bestmove {best_move}")
+
+            if not is_in_endgame:
+                if in_endgame(board):
+                    is_in_endgame = True
+                    piece_square_tables[chess.KING] = king_eg_pst
+                    piece_square_tables[chess.PAWN] = pawn_eg_pst
+
+        elif args[:2] == ["setoption", "name"]:
+            if args[2:] == ["UCI_Chess960", "value", "true"]:
+                chess960 = True
+
 
 if __name__ == "__main__":
     main()
