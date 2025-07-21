@@ -2,6 +2,8 @@
 import sys
 import chess
 import random
+import time
+import re
 
 piece_values = {
     chess.PAWN: 1,
@@ -15,7 +17,6 @@ piece_values = {
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 
 def square_area(square, radius):
-    """Возвращает область вокруг клетки `square` с радиусом `radius`"""
     file = chess.square_file(square)
     rank = chess.square_rank(square)
     area = []
@@ -27,6 +28,19 @@ def square_area(square, radius):
                 area.append(chess.square(f, r))
     return area
 
+def is_passed_pawn(board, square, color):
+    file = chess.square_file(square)
+    rank = chess.square_rank(square)
+    for df in [-1, 0, 1]:
+        f = file + df
+        if 0 <= f < 8:
+            for r in range(rank + 1, 8) if color == chess.WHITE else range(rank - 1, -1, -1):
+                sq = chess.square(f, r)
+                piece = board.piece_at(sq)
+                if piece and piece.piece_type == chess.PAWN and piece.color != color:
+                    return False
+    return True
+
 def evaluate_board(board):
     if board.is_checkmate():
         return 10000 if board.turn == chess.BLACK else -10000
@@ -35,45 +49,97 @@ def evaluate_board(board):
 
     score = 0
 
-    # 1. Материальное преимущество
+    # 1. Материал
+    material_score = 0
     for piece_type in piece_values:
-        white_pieces = board.pieces(piece_type, chess.WHITE)
-        black_pieces = board.pieces(piece_type, chess.BLACK)
-        score += len(white_pieces) * piece_values[piece_type]
-        score -= len(black_pieces) * piece_values[piece_type]
+        white_count = len(board.pieces(piece_type, chess.WHITE))
+        black_count = len(board.pieces(piece_type, chess.BLACK))
+        material_score += (white_count - black_count) * piece_values[piece_type]
+    score += material_score * 100  # Главный вес
 
     # 2. Безопасность короля
     def king_safety(color):
         king_square = board.king(color)
         if king_square is None:
             return -9999
-        danger = 0
+        safety = 0
         attackers = board.attackers(not color, king_square)
-        danger -= len(attackers) * 0.5
+        safety -= len(attackers) * 50
         for square in square_area(king_square, 1):
             piece = board.piece_at(square)
             if piece and piece.color == color:
-                danger += 0.1
-        return danger
+                safety += 5
+        return safety
 
-    score += king_safety(chess.WHITE)
-    score -= king_safety(chess.BLACK)
+    king_safety_score = king_safety(chess.WHITE) - king_safety(chess.BLACK)
+    score += king_safety_score * 10
 
-    # 3. Контроль центра
+    # 3. Позиционные элементы
+    positional_score = 0
+
+    # Piece-square tables (только пешки, пример)
+    PST = {
+        chess.PAWN: [
+            0, 0, 0, 0, 0, 0, 0, 0,
+            5, 5, 5, -5, -5, 5, 5, 5,
+            1, 1, 2, 3, 3, 2, 1, 1,
+            0.5, 0.5, 1, 2.5, 2.5, 1, 0.5, 0.5,
+            0, 0, 0, 2, 2, 0, 0, 0,
+            0.5, -0.5, -1, 0, 0, -1, -0.5, 0.5,
+            0.5, 1, 1, -2, -2, 1, 1, 0.5,
+            0, 0, 0, 0, 0, 0, 0, 0
+        ],
+    }
+
+    for color in [chess.WHITE, chess.BLACK]:
+        sign = 1 if color == chess.WHITE else -1
+        for piece_type in PST:
+            for square in board.pieces(piece_type, color):
+                index = square if color == chess.WHITE else chess.square_mirror(square)
+                positional_score += sign * PST[piece_type][index]
+
+    # Мобильность
+    white_mob = len(list(board.generate_legal_moves(chess.WHITE)))
+    black_mob = len(list(board.generate_legal_moves(chess.BLACK)))
+    positional_score += (white_mob - black_mob) * 0.1
+
+    # Контроль центра
     for square in center_squares:
-        piece = board.piece_at(square)
-        if piece:
-            score += 0.2 if piece.color == chess.WHITE else -0.2
+        attackers_white = board.attackers(chess.WHITE, square)
+        attackers_black = board.attackers(chess.BLACK, square)
+        positional_score += (len(attackers_white) - len(attackers_black)) * 0.2
 
-    # 4. Развитие фигур (коней и слонов)
-    for piece_type in [chess.KNIGHT, chess.BISHOP]:
-        for sq in board.pieces(piece_type, chess.WHITE):
-            if chess.square_rank(sq) > 1:
-                score += 0.1
-        for sq in board.pieces(piece_type, chess.BLACK):
-            if chess.square_rank(sq) < 6:
-                score -= 0.1
+    # Пешечная структура
+    def pawn_structure(color):
+        score = 0
+        pawns = board.pieces(chess.PAWN, color)
+        files = [chess.square_file(p) for p in pawns]
+        file_counts = {f: files.count(f) for f in set(files)}
 
+        for f, count in file_counts.items():
+            if count > 1:
+                score -= 0.5 * (count - 1)
+
+        for p in pawns:
+            file = chess.square_file(p)
+            isolated = True
+            for df in [-1, 1]:
+                f2 = file + df
+                if 0 <= f2 < 8:
+                    if any(chess.square_file(other) == f2 for other in pawns):
+                        isolated = False
+                        break
+            if isolated:
+                score -= 0.5
+
+            if is_passed_pawn(board, p, color):
+                score += 1.0
+        return score
+
+    positional_score += pawn_structure(chess.WHITE)
+    positional_score -= pawn_structure(chess.BLACK)
+
+    score += positional_score  # Меньший вес
     return score
 
 def minimax(board, depth, alpha, beta):
@@ -103,35 +169,40 @@ def minimax(board, depth, alpha, beta):
                 break
         return min_eval
 
-def choose_move(board):
-    if board.fullmove_number == 1 and board.turn == chess.WHITE:
-        for mv in ["e2e4", "d2d4", "c2c4", "g1f3"]:
-            move = chess.Move.from_uci(mv)
-            if move in board.legal_moves:
-                return move
-
+def choose_move(board, time_limit=1.0):
+    best_move = None
     best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
-    best_moves = []
+    start_time = time.time()
+    depth = 1
 
-    for move in board.legal_moves:
-        board.push(move)
-        score = minimax(board, 2, -float('inf'), float('inf'))  # глубина 2
-        board.pop()
+    while True:
+        if time.time() - start_time > time_limit:
+            break
 
-        if board.turn == chess.WHITE:
-            if score > best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-        else:
-            if score < best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
+        current_best = None
+        current_best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
 
-    return random.choice(best_moves) if best_moves else None
+        for move in board.legal_moves:
+            board.push(move)
+            score = minimax(board, depth, -float('inf'), float('inf'))
+            board.pop()
+
+            if board.turn == chess.WHITE:
+                if score > current_best_score:
+                    current_best_score = score
+                    current_best = move
+            else:
+                if score < current_best_score:
+                    current_best_score = score
+                    current_best = move
+
+        if current_best is not None:
+            best_move = current_best
+            best_score = current_best_score
+
+        depth += 1
+
+    return best_move
 
 def main():
     board = chess.Board()
@@ -142,8 +213,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 1.1")
-            print("id author Classic")
+            print("id name SmileyMate version 2.0")
+            print("id author Classic+GPT")
             print("uciok")
         elif line == "isready":
             print("readyok")
@@ -168,7 +239,22 @@ def main():
                     for mv in moves:
                         board.push_uci(mv)
         elif line.startswith("go"):
-            move = choose_move(board)
+            time_limit = 1.0  # default
+            wtime = btime = 0
+
+            match = re.search(r"wtime (\d+)", line)
+            if match:
+                wtime = int(match.group(1)) / 1000
+            match = re.search(r"btime (\d+)", line)
+            if match:
+                btime = int(match.group(1)) / 1000
+
+            if board.turn == chess.WHITE and wtime:
+                time_limit = max(0.05, wtime / 40)
+            elif board.turn == chess.BLACK and btime:
+                time_limit = max(0.05, btime / 40)
+
+            move = choose_move(board, time_limit)
             if move is not None:
                 print("bestmove", move.uci())
             else:
