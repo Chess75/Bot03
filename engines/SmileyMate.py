@@ -1,223 +1,259 @@
-#!/usr/bin/env python3
-import sys
 import chess
-import random
+import chess.polyglot
+import chess.syzygy
 import time
+import random
+from collections import defaultdict
 
-piece_values = {
-    chess.PAWN: 100,
-    chess.KNIGHT: 320,
-    chess.BISHOP: 330,
-    chess.ROOK: 500,
-    chess.QUEEN: 900,
-    chess.KING: 0
-}
+class TranspositionTable:
+    def __init__(self):
+        self.table = {}
 
-# Примерные piece-square таблицы (упрощённые)
-piece_square_tables = {
-    chess.PAWN: [
-        0, 0, 0, 0, 0, 0, 0, 0,
-        5, 10, 10, -20, -20, 10, 10, 5,
-        5, -5, -10, 0, 0, -10, -5, 5,
-        0, 0, 0, 20, 20, 0, 0, 0,
-        5, 5, 10, 25, 25, 10, 5, 5,
-        10, 10, 20, 30, 30, 20, 10, 10,
-        50, 50, 50, 50, 50, 50, 50, 50,
-        0, 0, 0, 0, 0, 0, 0, 0
-    ],
-    chess.KNIGHT: [
-        -50, -40, -30, -30, -30, -30, -40, -50,
-        -40, -20, 0, 5, 5, 0, -20, -40,
-        -30, 5, 10, 15, 15, 10, 5, -30,
-        -30, 0, 15, 20, 20, 15, 0, -30,
-        -30, 5, 15, 20, 20, 15, 5, -30,
-        -30, 0, 10, 15, 15, 10, 0, -30,
-        -40, -20, 0, 0, 0, 0, -20, -40,
-        -50, -40, -30, -30, -30, -30, -40, -50,
-    ],
-    chess.BISHOP: [
-        -20, -10, -10, -10, -10, -10, -10, -20,
-        -10, 5, 0, 0, 0, 0, 5, -10,
-        -10, 10, 10, 10, 10, 10, 10, -10,
-        -10, 0, 10, 10, 10, 10, 0, -10,
-        -10, 5, 5, 10, 10, 5, 5, -10,
-        -10, 0, 5, 10, 10, 5, 0, -10,
-        -10, 0, 0, 0, 0, 0, 0, -10,
-        -20, -10, -10, -10, -10, -10, -10, -20,
-    ],
-    # Можно добавить другие фигуры...
-}
+    def store(self, zobrist_key, depth, score, flag, move):
+        self.table[zobrist_key] = (depth, score, flag, move)
 
-center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
+    def lookup(self, zobrist_key, depth):
+        entry = self.table.get(zobrist_key)
+        if entry and entry[0] >= depth:
+            return entry
+        return None
 
-def square_area(square, radius):
-    file = chess.square_file(square)
-    rank = chess.square_rank(square)
-    area = []
-    for df in range(-radius, radius + 1):
-        for dr in range(-radius, radius + 1):
-            f = file + df
-            r = rank + dr
-            if 0 <= f < 8 and 0 <= r < 8:
-                area.append(chess.square(f, r))
-    return area
+class OpeningBook:
+    def __init__(self, path="data/book.bin"):
+        try:
+            self.book = chess.polyglot.open_reader(path)
+        except:
+            self.book = None
 
-def evaluate_board(board):
-    if board.is_checkmate():
-        return -100000 if board.turn else 100000
-    if board.is_stalemate() or board.is_insufficient_material():
-        return 0
+    def get_move(self, board):
+        if not self.book:
+            return None
+        try:
+            entry = self.book.find(board)
+            return entry.move
+        except:
+            return None
 
-    score = 0
+class PawnStructureEvaluator:
+    def __init__(self):
+        # Example weights
+        self.isolated_penalty = -10
+        self.doubled_penalty = -8
+        self.passed_bonus = 20
+        self.backward_penalty = -5
 
-    # Материальное преимущество
-    for piece_type in piece_values:
-        white_pieces = board.pieces(piece_type, chess.WHITE)
-        black_pieces = board.pieces(piece_type, chess.BLACK)
-        score += len(white_pieces) * piece_values[piece_type]
-        score -= len(black_pieces) * piece_values[piece_type]
+    def evaluate(self, board, color):
+        score = 0
+        pawns = board.pieces(chess.PAWN, color)
+        files = [chess.square_file(p) for p in pawns]
 
-    # Позиционная оценка через piece-square tables
-    for piece_type, table in piece_square_tables.items():
-        for square in board.pieces(piece_type, chess.WHITE):
-            score += table[square]
-        for square in board.pieces(piece_type, chess.BLACK):
-            score -= table[chess.square_mirror(square)]
+        # Isolated pawns
+        for f in files:
+            if not any((file == f-1 or file == f+1) for file in files):
+                score += self.isolated_penalty
 
-    # Безопасность короля
-    def king_safety(color):
-        king_square = board.king(color)
-        if king_square is None:
-            return -9999
-        danger = 0
-        attackers = board.attackers(not color, king_square)
-        danger -= len(attackers) * 20
-        for square in square_area(king_square, 1):
-            piece = board.piece_at(square)
-            if piece and piece.color == color:
-                danger += 5
-        return danger
+        # Doubled pawns
+        for f in set(files):
+            count = files.count(f)
+            if count > 1:
+                score += self.doubled_penalty * (count-1)
 
-    score += king_safety(chess.WHITE)
-    score -= king_safety(chess.BLACK)
+        # Passed pawns
+        for p in pawns:
+            if self.is_passed_pawn(board, p, color):
+                score += self.passed_bonus
 
-    # Контроль центра
-    for square in center_squares:
-        piece = board.piece_at(square)
-        if piece:
-            score += 10 if piece.color == chess.WHITE else -10
+        # Backward pawns — simplified, can be extended
+        # ...
 
-    # Мобильность
-    score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
+        return score
 
-    return score
-
-def minimax(board, depth, alpha, beta):
-    if depth == 0 or board.is_game_over():
-        return evaluate_board(board)
-
-    if board.turn == chess.WHITE:
-        max_eval = -float('inf')
-        for move in board.legal_moves:
-            board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
-            board.pop()
-            max_eval = max(max_eval, eval)
-            alpha = max(alpha, eval)
-            if beta <= alpha:
-                break
-        return max_eval
-    else:
-        min_eval = float('inf')
-        for move in board.legal_moves:
-            board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
-            board.pop()
-            min_eval = min(min_eval, eval)
-            beta = min(beta, eval)
-            if beta <= alpha:
-                break
-        return min_eval
-
-def choose_move(board, time_left=10.0):
-    # Если мало времени — делаем ход моментально
-    if time_left < 6.0:
-        return random.choice(list(board.legal_moves))
-
-    best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
-    best_moves = []
-
-    for move in board.legal_moves:
-        board.push(move)
-        score = minimax(board, 2, -float('inf'), float('inf'))
-        board.pop()
-
-        if board.turn == chess.WHITE:
-            if score > best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
+    def is_passed_pawn(self, board, square, color):
+        # Checks if no enemy pawns block or attack in front
+        enemy_color = not color
+        file = chess.square_file(square)
+        rank = chess.square_rank(square)
+        if color == chess.WHITE:
+            ahead_squares = [chess.square(f, r) for f in range(file-1, file+2)
+                             for r in range(rank+1, 8) if 0 <= f <= 7]
         else:
-            if score < best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
+            ahead_squares = [chess.square(f, r) for f in range(file-1, file+2)
+                             for r in range(0, rank) if 0 <= f <= 7]
 
-    return random.choice(best_moves) if best_moves else None
+        for sq in ahead_squares:
+            if sq in board.pieces(chess.PAWN, enemy_color):
+                return False
+        return True
+
+class MoveFilter:
+    def __init__(self):
+        pass
+
+    def is_good_sacrifice(self, board, move):
+        # Don't allow easy losses of material unless there's compensation
+        # Basic heuristic: If move captures but leaves attacker hanging, reject
+        # Can be expanded with deeper tactical checks
+        if board.is_capture(move):
+            after = board.copy()
+            after.push(move)
+            attackers = after.attackers(not after.turn, after.to_square)
+            if len(attackers) > 0 and after.is_capture(move) and board.piece_at(move.to_square).piece_type > board.piece_at(move.from_square).piece_type:
+                return False
+        return True
+
+class Engine:
+    def __init__(self):
+        self.tt = TranspositionTable()
+        self.book = OpeningBook()
+        self.pawn_eval = PawnStructureEvaluator()
+        self.move_filter = MoveFilter()
+        self.nodes = 0
+        self.max_depth = 4
+        self.start_time = None
+        self.time_limit = 1.0
+        self.best_move = None
+
+    def evaluate(self, board):
+        # Material
+        material = self.material_eval(board)
+        # Pawn structure
+        pawns_w = self.pawn_eval.evaluate(board, chess.WHITE)
+        pawns_b = self.pawn_eval.evaluate(board, chess.BLACK)
+        pawn_structure = pawns_w - pawns_b
+        # Mobility
+        mobility = len(list(board.legal_moves)) if board.turn == chess.WHITE else -len(list(board.legal_moves))
+        # King safety — simplified
+        king_safety = self.king_safety(board)
+
+        total_eval = material + pawn_structure + mobility + king_safety
+        return total_eval if board.turn == chess.WHITE else -total_eval
+
+    def material_eval(self, board):
+        values = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
+                  chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
+        white_score = 0
+        black_score = 0
+        for piece_type in values:
+            white_score += len(board.pieces(piece_type, chess.WHITE)) * values[piece_type]
+            black_score += len(board.pieces(piece_type, chess.BLACK)) * values[piece_type]
+        return white_score - black_score
+
+    def king_safety(self, board):
+        # Simplified king safety: penalty for enemy pieces near king
+        king_square = board.king(board.turn)
+        enemy_color = not board.turn
+        penalty = 0
+        for sq in chess.SquareSet(chess.square_ring(king_square)):
+            if board.piece_at(sq) and board.piece_at(sq).color == enemy_color:
+                penalty -= 20
+        return penalty
+
+    def search(self, board, depth, alpha, beta):
+        if time.time() - self.start_time > self.time_limit:
+            raise TimeoutError
+
+        self.nodes += 1
+        if depth == 0 or board.is_game_over():
+            return self.evaluate(board)
+
+        tt_entry = self.tt.lookup(board.zobrist_hash(), depth)
+        if tt_entry:
+            _, score, flag, move = tt_entry
+            if flag == 'EXACT':
+                return score
+            elif flag == 'LOWERBOUND':
+                alpha = max(alpha, score)
+            elif flag == 'UPPERBOUND':
+                beta = min(beta, score)
+            if alpha >= beta:
+                return score
+
+        max_eval = float('-inf')
+        best_move_local = None
+
+        moves = list(board.legal_moves)
+        # Sort moves - captures and checks first
+        moves.sort(key=lambda m: (board.is_capture(m), board.gives_check(m)), reverse=True)
+
+        for move in moves:
+            if not self.move_filter.is_good_sacrifice(board, move):
+                continue
+
+            board.push(move)
+            try:
+                score = -self.search(board, depth - 1, -beta, -alpha)
+            except TimeoutError:
+                board.pop()
+                raise
+            board.pop()
+
+            if score > max_eval:
+                max_eval = score
+                best_move_local = move
+
+            alpha = max(alpha, score)
+            if alpha >= beta:
+                break
+
+        # Store in TT
+        flag = 'EXACT'
+        if max_eval <= alpha:
+            flag = 'UPPERBOUND'
+        elif max_eval >= beta:
+            flag = 'LOWERBOUND'
+
+        self.tt.store(board.zobrist_hash(), depth, max_eval, flag, best_move_local)
+
+        if depth == self.max_depth:
+            self.best_move = best_move_local
+
+        return max_eval
+
+    def iterative_deepening(self, board, max_time=1.0):
+        self.start_time = time.time()
+        self.time_limit = max_time
+        self.best_move = None
+        self.nodes = 0
+
+        for depth in range(1, self.max_depth + 1):
+            try:
+                self.search(board, depth, float('-inf'), float('inf'))
+            except TimeoutError:
+                break
+
+        return self.best_move
+
+    def select_move(self, board, remaining_time):
+        # If book move available
+        book_move = self.book.get_move(board)
+        if book_move:
+            return book_move
+
+        # Adapt depth to time
+        if remaining_time < 6:
+            self.max_depth = 3
+        else:
+            self.max_depth = 5
+
+        return self.iterative_deepening(board, max_time=min(remaining_time * 0.9, 2.0))
+
+# ----------- Example usage ------------
+
+import sys
 
 def main():
     board = chess.Board()
-    time_left = 60.0  # начальное время (в секундах)
-
-    while True:
-        line = sys.stdin.readline()
-        if not line:
+    engine = Engine()
+    while not board.is_game_over():
+        print(board)
+        print("Thinking...")
+        # For testing, assume 10 seconds remaining
+        move = engine.select_move(board, remaining_time=10)
+        print(f"Engine plays: {move}")
+        board.push(move)
+        # For demo, break after a few moves
+        if board.fullmove_number > 20:
             break
-        line = line.strip()
-
-        if line == "uci":
-            print("id name SmileyMate")
-            print("id author Classic")
-            print("uciok")
-        elif line == "isready":
-            print("readyok")
-        elif line.startswith("ucinewgame"):
-            board.reset()
-            time_left = 60.0
-        elif line.startswith("position"):
-            parts = line.split(" ")
-            if "startpos" in parts:
-                board.reset()
-                if "moves" in parts:
-                    moves_index = parts.index("moves")
-                    moves = parts[moves_index + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
-            elif "fen" in parts:
-                fen_index = parts.index("fen")
-                fen_str = " ".join(parts[fen_index + 1:fen_index + 7])
-                board.set_fen(fen_str)
-                if "moves" in parts:
-                    moves_index = parts.index("moves")
-                    moves = parts[moves_index + 1:]
-                    for mv in moves:
-                        board.push_uci(mv)
-        elif line.startswith("go"):
-            move_start = time.time()
-            move = choose_move(board, time_left)
-            move_end = time.time()
-            time_spent = move_end - move_start
-            time_left = max(0.0, time_left - time_spent)
-            if move is not None:
-                print("bestmove", move.uci())
-            else:
-                print("bestmove 0000")
-        elif line == "quit":
-            break
-
-        sys.stdout.flush()
 
 if __name__ == "__main__":
     main()
