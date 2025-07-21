@@ -3,9 +3,7 @@ import sys
 import chess
 import random
 import time
-from collections import defaultdict
 
-# === Piece Values ===
 piece_values = {
     chess.PAWN: 100,
     chess.KNIGHT: 320,
@@ -15,7 +13,6 @@ piece_values = {
     chess.KING: 0
 }
 
-# === Piece-Square Tables ===
 piece_square_tables = {
     chess.PAWN: [
         0, 0, 0, 0, 0, 0, 0, 0,
@@ -79,12 +76,10 @@ piece_square_tables = {
     ]
 }
 
-
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 attack_unit = {chess.PAWN: 1, chess.KNIGHT: 2, chess.BISHOP: 2, chess.ROOK: 3, chess.QUEEN: 5}
 transposition_table = {}
 
-# === Evaluation ===
 def evaluate_board(board):
     if board.is_checkmate():
         return -100000 if board.turn else 100000
@@ -92,32 +87,17 @@ def evaluate_board(board):
         return 0
 
     score = 0
-
     for piece_type in piece_values:
         white = board.pieces(piece_type, chess.WHITE)
         black = board.pieces(piece_type, chess.BLACK)
         score += len(white) * piece_values[piece_type]
         score -= len(black) * piece_values[piece_type]
 
-    for piece_type, table in piece_square_tables.items():
-        for sq in board.pieces(piece_type, chess.WHITE):
-            score += table[sq]
-        for sq in board.pieces(piece_type, chess.BLACK):
-            score -= table[chess.square_mirror(sq)]
-
-    def king_safety(color):
-        king_sq = board.king(color)
-        if king_sq is None:
-            return -9999
-        danger = 0
-        for attacker_sq in board.attackers(not color, king_sq):
-            piece = board.piece_at(attacker_sq)
-            if piece:
-                danger += attack_unit.get(piece.piece_type, 0)
-        return -danger * 10
-
-    score += king_safety(chess.WHITE)
-    score -= king_safety(chess.BLACK)
+        table = piece_square_tables.get(piece_type)
+        for sq in white:
+            if table: score += table[sq]
+        for sq in black:
+            if table: score -= table[chess.square_mirror(sq)]
 
     for square in center_squares:
         piece = board.piece_at(square)
@@ -126,6 +106,8 @@ def evaluate_board(board):
 
     score += mobility_score(board)
     score += pawn_structure(board)
+    score += king_safety(board, chess.WHITE)
+    score -= king_safety(board, chess.BLACK)
 
     return score
 
@@ -136,7 +118,7 @@ def mobility_score(board):
         for pt in [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]:
             for sq in board.pieces(pt, color):
                 mobility += len(board.attacks(sq))
-        score += (mobility * (1 if color == chess.WHITE else -1))
+        score += mobility * (1 if color == chess.WHITE else -1)
     return score
 
 def pawn_structure(board):
@@ -149,9 +131,8 @@ def pawn_structure(board):
             rank = chess.square_rank(sq)
             if files.count(file) > 1:
                 score -= 15 if color == chess.WHITE else -15
-            if file > 0 and file < 7:
-                if not any(f in files for f in [file - 1, file + 1]):
-                    score -= 20 if color == chess.WHITE else -20
+            if not any(f in files for f in [file - 1, file + 1]):
+                score -= 20 if color == chess.WHITE else -20
             is_passed = True
             for f in [file - 1, file, file + 1]:
                 if 0 <= f <= 7:
@@ -163,7 +144,15 @@ def pawn_structure(board):
                 score += 30 if color == chess.WHITE else -30
     return score
 
-# === Move Ordering ===
+def king_safety(board, color):
+    king_sq = board.king(color)
+    danger = 0
+    for attacker_sq in board.attackers(not color, king_sq):
+        piece = board.piece_at(attacker_sq)
+        if piece:
+            danger += attack_unit.get(piece.piece_type, 0)
+    return -danger * 10
+
 def move_score(move, board):
     if board.is_capture(move):
         victim = board.piece_at(move.to_square)
@@ -177,7 +166,6 @@ def move_score(move, board):
 def order_moves(board):
     return sorted(board.legal_moves, key=lambda m: move_score(m, board), reverse=True)
 
-# === Search ===
 def quiescence(board, alpha, beta, color):
     stand_pat = color * evaluate_board(board)
     if stand_pat >= beta:
@@ -219,28 +207,46 @@ def negamax(board, depth, alpha, beta, color):
     transposition_table[key] = max_eval
     return max_eval
 
-# === Move Selection ===
 def choose_move(board, time_limit=2.0):
     start_time = time.time()
-    best_move = None
-    depth = 1
-
     color = 1 if board.turn == chess.WHITE else -1
 
-    while time.time() - start_time < time_limit:
-        max_score = -float('inf')
+    if time_limit > 20:
+        max_depth = 6
+    elif time_limit > 15:
+        max_depth = 5
+    elif time_limit > 10:
+        max_depth = 4
+    elif time_limit > 5:
+        max_depth = 2
+    else:
+        max_depth = 1
+
+    best_move = None
+    best_score = -float('inf')
+    depth = 1
+
+    while depth <= max_depth and time.time() - start_time < time_limit:
+        current_best = None
+        current_best_score = -float('inf')
+
         for move in order_moves(board):
             board.push(move)
             score = -negamax(board, depth, -float('inf'), float('inf'), -color)
             board.pop()
-            if score > max_score:
-                max_score = score
-                best_move = move
+
+            if score > current_best_score:
+                current_best_score = score
+                current_best = move
+
+        if current_best:
+            best_score = current_best_score
+            best_move = current_best
+
         depth += 1
 
     return best_move if best_move else random.choice(list(board.legal_moves))
 
-# === UCI Protocol ===
 def main():
     board = chess.Board()
 
@@ -263,8 +269,7 @@ def main():
             if "startpos" in parts:
                 board.reset()
                 if "moves" in parts:
-                    moves_index = parts.index("moves")
-                    moves = parts[moves_index + 1:]
+                    moves = parts[parts.index("moves") + 1:]
                     for mv in moves:
                         board.push_uci(mv)
             elif "fen" in parts:
@@ -272,8 +277,7 @@ def main():
                 fen_str = " ".join(parts[fen_index + 1:fen_index + 7])
                 board.set_fen(fen_str)
                 if "moves" in parts:
-                    moves_index = parts.index("moves")
-                    moves = parts[moves_index + 1:]
+                    moves = parts[parts.index("moves") + 1:]
                     for mv in moves:
                         board.push_uci(mv)
         elif line.startswith("go"):
@@ -288,10 +292,10 @@ def main():
             think_time = min(current_time * 0.02, 2.0) if current_time else 2.0
 
             start_time = time.time()
-            move = choose_move(board, think_time)
+            move = choose_move(board, current_time or 2.0)
             elapsed = int((time.time() - start_time) * 1000)
 
-            if move is not None:
+            if move:
                 board.push(move)
                 eval_score = evaluate_board(board)
                 board.pop()
