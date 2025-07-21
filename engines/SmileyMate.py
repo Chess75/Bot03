@@ -41,6 +41,49 @@ def is_passed_pawn(board, square, color):
                     return False
     return True
 
+def king_safety(board, color):
+    king_square = board.king(color)
+    if king_square is None:
+        return -9999
+
+    danger = 0
+    attackers = board.attackers(not color, king_square)
+    danger -= len(attackers) * 50
+
+    # Открытые линии к королю
+    rank = chess.square_rank(king_square)
+    file = chess.square_file(king_square)
+    for df in [-1, 0, 1]:
+        f = file + df
+        if 0 <= f < 8:
+            for dr in [1, 2]:
+                r = rank + (dr if color == chess.WHITE else -dr)
+                if 0 <= r < 8:
+                    sq = chess.square(f, r)
+                    piece = board.piece_at(sq)
+                    if not piece or piece.piece_type != chess.PAWN or piece.color != color:
+                        danger -= 10
+
+    # Штраф за отсутствие рокировки после 10 хода
+    if board.fullmove_number > 10 and board.king(color) in [chess.E1, chess.E8]:
+        danger -= 30
+
+    # Штраф за короля в центре
+    center_files = [3, 4]
+    center_ranks = [3, 4]
+    kf = chess.square_file(king_square)
+    kr = chess.square_rank(king_square)
+    if kr in center_ranks and kf in center_files:
+        danger -= 40
+
+    # Бонус за фигуры рядом с королём
+    for square in square_area(king_square, 1):
+        piece = board.piece_at(square)
+        if piece and piece.color == color:
+            danger += 5
+
+    return danger
+
 def evaluate_board(board):
     if board.is_checkmate():
         return 10000 if board.turn == chess.BLACK else -10000
@@ -55,29 +98,15 @@ def evaluate_board(board):
         white_count = len(board.pieces(piece_type, chess.WHITE))
         black_count = len(board.pieces(piece_type, chess.BLACK))
         material_score += (white_count - black_count) * piece_values[piece_type]
-    score += material_score * 100  # Главный вес
+    score += material_score * 100
 
     # 2. Безопасность короля
-    def king_safety(color):
-        king_square = board.king(color)
-        if king_square is None:
-            return -9999
-        safety = 0
-        attackers = board.attackers(not color, king_square)
-        safety -= len(attackers) * 50
-        for square in square_area(king_square, 1):
-            piece = board.piece_at(square)
-            if piece and piece.color == color:
-                safety += 5
-        return safety
-
-    king_safety_score = king_safety(chess.WHITE) - king_safety(chess.BLACK)
-    score += king_safety_score * 10
+    score += king_safety(board, chess.WHITE)
+    score -= king_safety(board, chess.BLACK)
 
     # 3. Позиционные элементы
     positional_score = 0
 
-    # Piece-square tables (только пешки, пример)
     PST = {
         chess.PAWN: [
             0, 0, 0, 0, 0, 0, 0, 0,
@@ -88,7 +117,7 @@ def evaluate_board(board):
             0.5, -0.5, -1, 0, 0, -1, -0.5, 0.5,
             0.5, 1, 1, -2, -2, 1, 1, 0.5,
             0, 0, 0, 0, 0, 0, 0, 0
-        ],
+        ]
     }
 
     for color in [chess.WHITE, chess.BLACK]:
@@ -105,9 +134,10 @@ def evaluate_board(board):
 
     # Контроль центра
     for square in center_squares:
-        attackers_white = board.attackers(chess.WHITE, square)
-        attackers_black = board.attackers(chess.BLACK, square)
-        positional_score += (len(attackers_white) - len(attackers_black)) * 0.2
+        positional_score += (
+            len(board.attackers(chess.WHITE, square)) -
+            len(board.attackers(chess.BLACK, square))
+        ) * 0.2
 
     # Пешечная структура
     def pawn_structure(color):
@@ -115,7 +145,6 @@ def evaluate_board(board):
         pawns = board.pieces(chess.PAWN, color)
         files = [chess.square_file(p) for p in pawns]
         file_counts = {f: files.count(f) for f in set(files)}
-
         for f, count in file_counts.items():
             if count > 1:
                 score -= 0.5 * (count - 1)
@@ -131,7 +160,6 @@ def evaluate_board(board):
                         break
             if isolated:
                 score -= 0.5
-
             if is_passed_pawn(board, p, color):
                 score += 1.0
         return score
@@ -139,7 +167,7 @@ def evaluate_board(board):
     positional_score += pawn_structure(chess.WHITE)
     positional_score -= pawn_structure(chess.BLACK)
 
-    score += positional_score  # Меньший вес
+    score += positional_score
     return score
 
 def minimax(board, depth, alpha, beta):
@@ -213,8 +241,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate version 2.0")
-            print("id author Classic+GPT")
+            print("id name SmileyMate version 3.0")
+            print("id author Classic")
             print("uciok")
         elif line == "isready":
             print("readyok")
@@ -239,7 +267,7 @@ def main():
                     for mv in moves:
                         board.push_uci(mv)
         elif line.startswith("go"):
-            time_limit = 1.0  # default
+            time_limit = 0.5  # fallback
             wtime = btime = 0
 
             match = re.search(r"wtime (\d+)", line)
@@ -266,3 +294,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
