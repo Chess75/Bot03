@@ -1,6 +1,7 @@
 import chess
 import chess.polyglot
 import time
+import random
 from collections import defaultdict
 
 class TranspositionTable:
@@ -67,6 +68,7 @@ class PawnStructureEvaluator:
         return score
 
     def is_passed_pawn(self, board, square, color):
+        # Checks if no enemy pawns block or attack in front
         enemy_color = not color
         file = chess.square_file(square)
         rank = chess.square_rank(square)
@@ -94,7 +96,6 @@ class MoveFilter:
             after = board.copy()
             after.push(move)
             attackers = after.attackers(not after.turn, after.to_square)
-            # Check if attacker is hanging (simplified)
             from_piece = board.piece_at(move.from_square)
             to_piece = board.piece_at(move.to_square)
             if len(attackers) > 0 and to_piece and from_piece and to_piece.piece_type > from_piece.piece_type:
@@ -114,11 +115,15 @@ class Engine:
         self.best_move = None
 
     def evaluate(self, board):
+        # Material
         material = self.material_eval(board)
+        # Pawn structure
         pawns_w = self.pawn_eval.evaluate(board, chess.WHITE)
         pawns_b = self.pawn_eval.evaluate(board, chess.BLACK)
         pawn_structure = pawns_w - pawns_b
+        # Mobility
         mobility = len(list(board.legal_moves)) if board.turn == chess.WHITE else -len(list(board.legal_moves))
+        # King safety — simplified
         king_safety = self.king_safety(board)
 
         total_eval = material + pawn_structure + mobility + king_safety
@@ -135,11 +140,15 @@ class Engine:
         return white_score - black_score
 
     def king_safety(self, board):
+        # Simplified king safety: penalty for enemy pieces near king
         king_square = board.king(board.turn)
         enemy_color = not board.turn
         penalty = 0
+        if king_square is None:
+            return penalty
         for sq in chess.SquareSet(chess.square_ring(king_square)):
-            if board.piece_at(sq) and board.piece_at(sq).color == enemy_color:
+            piece = board.piece_at(sq)
+            if piece and piece.color == enemy_color:
                 penalty -= 20
         return penalty
 
@@ -151,7 +160,7 @@ class Engine:
         if depth == 0 or board.is_game_over():
             return self.evaluate(board)
 
-        tt_entry = self.tt.lookup(board.transposition_key(), depth)
+        tt_entry = self.tt.lookup(board._transposition_key, depth)
         if tt_entry:
             _, score, flag, move = tt_entry
             if flag == 'EXACT':
@@ -167,6 +176,7 @@ class Engine:
         best_move_local = None
 
         moves = list(board.legal_moves)
+        # Sort moves - captures and checks first
         moves.sort(key=lambda m: (board.is_capture(m), board.gives_check(m)), reverse=True)
 
         for move in moves:
@@ -189,17 +199,14 @@ class Engine:
             if alpha >= beta:
                 break
 
-        # Correct flag assignment:
-        # if max_eval <= alpha_before_search, then UPPERBOUND
-        # if max_eval >= beta, then LOWERBOUND
-        # else EXACT
+        # Store in TT
         flag = 'EXACT'
         if max_eval <= alpha:
             flag = 'UPPERBOUND'
         elif max_eval >= beta:
             flag = 'LOWERBOUND'
 
-        self.tt.store(board.transposition_key(), depth, max_eval, flag, best_move_local)
+        self.tt.store(board._transposition_key, depth, max_eval, flag, best_move_local)
 
         if depth == self.max_depth:
             self.best_move = best_move_local
@@ -221,10 +228,12 @@ class Engine:
         return self.best_move
 
     def select_move(self, board, remaining_time):
+        # If book move available
         book_move = self.book.get_move(board)
         if book_move:
             return book_move
 
+        # Adapt depth to time
         if remaining_time < 6:
             self.max_depth = 3
         else:
@@ -251,4 +260,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
