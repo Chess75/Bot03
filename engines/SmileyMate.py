@@ -1,6 +1,7 @@
 import chess
 import chess.polyglot
 import time
+from collections import defaultdict
 
 class TranspositionTable:
     def __init__(self):
@@ -19,7 +20,7 @@ class OpeningBook:
     def __init__(self, path="data/book.bin"):
         try:
             self.book = chess.polyglot.open_reader(path)
-        except Exception:
+        except:
             self.book = None
 
     def get_move(self, board):
@@ -28,11 +29,12 @@ class OpeningBook:
         try:
             entry = self.book.find(board)
             return entry.move
-        except Exception:
+        except:
             return None
 
 class PawnStructureEvaluator:
     def __init__(self):
+        # Example weights
         self.isolated_penalty = -10
         self.doubled_penalty = -8
         self.passed_bonus = 20
@@ -52,14 +54,15 @@ class PawnStructureEvaluator:
         for f in set(files):
             count = files.count(f)
             if count > 1:
-                score += self.doubled_penalty * (count - 1)
+                score += self.doubled_penalty * (count-1)
 
         # Passed pawns
         for p in pawns:
             if self.is_passed_pawn(board, p, color):
                 score += self.passed_bonus
 
-        # Backward pawns — можно расширить при необходимости
+        # Backward pawns — simplified, can be extended
+        # ...
 
         return score
 
@@ -68,10 +71,10 @@ class PawnStructureEvaluator:
         file = chess.square_file(square)
         rank = chess.square_rank(square)
         if color == chess.WHITE:
-            ahead_squares = [chess.square(f, r) for f in range(file - 1, file + 2)
-                             for r in range(rank + 1, 8) if 0 <= f <= 7]
+            ahead_squares = [chess.square(f, r) for f in range(file-1, file+2)
+                             for r in range(rank+1, 8) if 0 <= f <= 7]
         else:
-            ahead_squares = [chess.square(f, r) for f in range(file - 1, file + 2)
+            ahead_squares = [chess.square(f, r) for f in range(file-1, file+2)
                              for r in range(0, rank) if 0 <= f <= 7]
 
         for sq in ahead_squares:
@@ -84,17 +87,18 @@ class MoveFilter:
         pass
 
     def is_good_sacrifice(self, board, move):
-        # Не допускаем простую потерю материала без компенсации
+        # Don't allow easy losses of material unless there's compensation
+        # Basic heuristic: If move captures but leaves attacker hanging, reject
+        # Can be expanded with deeper tactical checks
         if board.is_capture(move):
             after = board.copy()
             after.push(move)
-            attackers = after.attackers(not after.turn, move.to_square)
-            # Если после хода атакуют нашу фигуру и захваченная фигура по цене меньше, считаем плохим
-            captured_piece = board.piece_at(move.to_square)
-            moving_piece = board.piece_at(move.from_square)
-            if attackers and captured_piece and moving_piece:
-                if captured_piece.piece_type > moving_piece.piece_type:
-                    return False
+            attackers = after.attackers(not after.turn, after.to_square)
+            # Check if attacker is hanging (simplified)
+            from_piece = board.piece_at(move.from_square)
+            to_piece = board.piece_at(move.to_square)
+            if len(attackers) > 0 and to_piece and from_piece and to_piece.piece_type > from_piece.piece_type:
+                return False
         return True
 
 class Engine:
@@ -121,10 +125,8 @@ class Engine:
         return total_eval if board.turn == chess.WHITE else -total_eval
 
     def material_eval(self, board):
-        values = {
-            chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
-            chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0
-        }
+        values = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
+                  chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
         white_score = 0
         black_score = 0
         for piece_type in values:
@@ -136,11 +138,8 @@ class Engine:
         king_square = board.king(board.turn)
         enemy_color = not board.turn
         penalty = 0
-        if king_square is None:
-            return 0  # Например, если шахматная позиция окончена
         for sq in chess.SquareSet(chess.square_ring(king_square)):
-            piece = board.piece_at(sq)
-            if piece and piece.color == enemy_color:
+            if board.piece_at(sq) and board.piece_at(sq).color == enemy_color:
                 penalty -= 20
         return penalty
 
@@ -152,9 +151,9 @@ class Engine:
         if depth == 0 or board.is_game_over():
             return self.evaluate(board)
 
-        tt_entry = self.tt.lookup(board.zobrist_hash(), depth)
+        tt_entry = self.tt.lookup(board.transposition_key(), depth)
         if tt_entry:
-            stored_depth, score, flag, move = tt_entry
+            _, score, flag, move = tt_entry
             if flag == 'EXACT':
                 return score
             elif flag == 'LOWERBOUND':
@@ -190,35 +189,17 @@ class Engine:
             if alpha >= beta:
                 break
 
-        # Определение флага для хранения в таблице
+        # Correct flag assignment:
+        # if max_eval <= alpha_before_search, then UPPERBOUND
+        # if max_eval >= beta, then LOWERBOUND
+        # else EXACT
         flag = 'EXACT'
-        # Здесь надо поправить условие — alpha и beta на момент возврата могут измениться, 
-        # поэтому используем входные alpha и beta в функцию (alpha_orig, beta_orig)
-        # Но проще сохранить исходные alpha и beta в переменные перед циклом
-        # Сделаю это:
-        # (Внесу переменную alpha_orig, beta_orig)
-        # Из-за этого немного поменяю код:
-        # Сохраним alpha_orig и beta_orig в начале функции
-
-        # Перенесём выше:
-        # def search(self, board, depth, alpha, beta):
-        #    alpha_orig, beta_orig = alpha, beta
-
-        # Добавим это сейчас:
-
-        # В начале функции:
-        # alpha_orig, beta_orig = alpha, beta
-
-        # Так что исправим функцию сейчас полностью ниже.
-
-        # Правильный флаг:
-
-        if max_eval <= alpha_orig:
+        if max_eval <= alpha:
             flag = 'UPPERBOUND'
-        elif max_eval >= beta_orig:
+        elif max_eval >= beta:
             flag = 'LOWERBOUND'
 
-        self.tt.store(board.zobrist_hash(), depth, max_eval, flag, best_move_local)
+        self.tt.store(board.transposition_key(), depth, max_eval, flag, best_move_local)
 
         if depth == self.max_depth:
             self.best_move = best_move_local
@@ -252,73 +233,7 @@ class Engine:
         return self.iterative_deepening(board, max_time=min(remaining_time * 0.9, 2.0))
 
 
-# ----------- Исправленная функция search с alpha_orig, beta_orig -----------
-
-def search(self, board, depth, alpha, beta):
-    alpha_orig, beta_orig = alpha, beta
-
-    if time.time() - self.start_time > self.time_limit:
-        raise TimeoutError
-
-    self.nodes += 1
-    if depth == 0 or board.is_game_over():
-        return self.evaluate(board)
-
-    tt_entry = self.tt.lookup(board.zobrist_hash(), depth)
-    if tt_entry:
-        stored_depth, score, flag, move = tt_entry
-        if flag == 'EXACT':
-            return score
-        elif flag == 'LOWERBOUND':
-            alpha = max(alpha, score)
-        elif flag == 'UPPERBOUND':
-            beta = min(beta, score)
-        if alpha >= beta:
-            return score
-
-    max_eval = float('-inf')
-    best_move_local = None
-
-    moves = list(board.legal_moves)
-    moves.sort(key=lambda m: (board.is_capture(m), board.gives_check(m)), reverse=True)
-
-    for move in moves:
-        if not self.move_filter.is_good_sacrifice(board, move):
-            continue
-
-        board.push(move)
-        try:
-            score = -self.search(board, depth - 1, -beta, -alpha)
-        except TimeoutError:
-            board.pop()
-            raise
-        board.pop()
-
-        if score > max_eval:
-            max_eval = score
-            best_move_local = move
-
-        alpha = max(alpha, score)
-        if alpha >= beta:
-            break
-
-    flag = 'EXACT'
-    if max_eval <= alpha_orig:
-        flag = 'UPPERBOUND'
-    elif max_eval >= beta_orig:
-        flag = 'LOWERBOUND'
-
-    self.tt.store(board.zobrist_hash(), depth, max_eval, flag, best_move_local)
-
-    if depth == self.max_depth:
-        self.best_move = best_move_local
-
-    return max_eval
-
-# Чтобы использовать исправленную функцию, нужно заменить метод в Engine:
-Engine.search = search
-
-# ----------- Пример использования ------------
+# ----------- Example usage ------------
 
 def main():
     board = chess.Board()
@@ -326,13 +241,14 @@ def main():
     while not board.is_game_over():
         print(board)
         print("Thinking...")
-        # Для теста считаем, что осталось 10 секунд
+        # For testing, assume 10 seconds remaining
         move = engine.select_move(board, remaining_time=10)
         print(f"Engine plays: {move}")
         board.push(move)
-        # Для демонстрации — выйдем после 20 ходов
+        # For demo, break after a few moves
         if board.fullmove_number > 20:
             break
 
 if __name__ == "__main__":
     main()
+
