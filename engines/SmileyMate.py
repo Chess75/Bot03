@@ -13,7 +13,6 @@ piece_values = {
     chess.KING: 0
 }
 
-# Примерные piece-square таблицы (упрощённые)
 piece_square_tables = {
     chess.PAWN: [
         0, 0, 0, 0, 0, 0, 0, 0,
@@ -44,8 +43,7 @@ piece_square_tables = {
         -10, 0, 5, 10, 10, 5, 0, -10,
         -10, 0, 0, 0, 0, 0, 0, -10,
         -20, -10, -10, -10, -10, -10, -10, -20,
-    ],
-    # Можно добавить другие фигуры...
+    ]
 }
 
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
@@ -70,21 +68,18 @@ def evaluate_board(board):
 
     score = 0
 
-    # Материальное преимущество
     for piece_type in piece_values:
         white_pieces = board.pieces(piece_type, chess.WHITE)
         black_pieces = board.pieces(piece_type, chess.BLACK)
         score += len(white_pieces) * piece_values[piece_type]
         score -= len(black_pieces) * piece_values[piece_type]
 
-    # Позиционная оценка через piece-square tables
     for piece_type, table in piece_square_tables.items():
         for square in board.pieces(piece_type, chess.WHITE):
             score += table[square]
         for square in board.pieces(piece_type, chess.BLACK):
             score -= table[chess.square_mirror(square)]
 
-    # Безопасность короля
     def king_safety(color):
         king_square = board.king(color)
         if king_square is None:
@@ -101,13 +96,11 @@ def evaluate_board(board):
     score += king_safety(chess.WHITE)
     score -= king_safety(chess.BLACK)
 
-    # Контроль центра
     for square in center_squares:
         piece = board.piece_at(square)
         if piece:
             score += 10 if piece.color == chess.WHITE else -10
 
-    # Мобильность
     score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
 
     return score
@@ -139,15 +132,16 @@ def minimax(board, depth, alpha, beta):
                 break
         return min_eval
 
-def choose_move(board, time_left=10.0):
-    # Если мало времени — делаем ход моментально
-    if time_left < 6.0:
-        return random.choice(list(board.legal_moves))
+def choose_move(board, time_limit=2.0):
+    start_time = time.time()
 
     best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
     best_moves = []
 
     for move in board.legal_moves:
+        if time.time() - start_time > time_limit:
+            break
+
         board.push(move)
         score = minimax(board, 2, -float('inf'), float('inf'))
         board.pop()
@@ -165,11 +159,14 @@ def choose_move(board, time_left=10.0):
             elif score == best_score:
                 best_moves.append(move)
 
-    return random.choice(best_moves) if best_moves else None
+    elapsed = time.time() - start_time
+    if elapsed < time_limit:
+        time.sleep(time_limit - elapsed)
+
+    return random.choice(best_moves) if best_moves else random.choice(list(board.legal_moves))
 
 def main():
     board = chess.Board()
-    time_left = 60.0  # начальное время (в секундах)
 
     while True:
         line = sys.stdin.readline()
@@ -185,7 +182,6 @@ def main():
             print("readyok")
         elif line.startswith("ucinewgame"):
             board.reset()
-            time_left = 60.0
         elif line.startswith("position"):
             parts = line.split(" ")
             if "startpos" in parts:
@@ -205,12 +201,25 @@ def main():
                     for mv in moves:
                         board.push_uci(mv)
         elif line.startswith("go"):
-            move_start = time.time()
-            move = choose_move(board, time_left)
-            move_end = time.time()
-            time_spent = move_end - move_start
-            time_left = max(0.0, time_left - time_spent)
+            tokens = line.split()
+            wtime = btime = None
+            if "wtime" in tokens:
+                wtime = int(tokens[tokens.index("wtime") + 1]) / 1000.0
+            if "btime" in tokens:
+                btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
+
+            current_time = wtime if board.turn == chess.WHITE else btime
+            think_time = min(current_time * 0.02, 2.0) if current_time else 2.0
+
+            start_time = time.time()
+            move = choose_move(board, think_time)
+            elapsed = int((time.time() - start_time) * 1000)
+
             if move is not None:
+                board.push(move)
+                eval_score = evaluate_board(board)
+                board.pop()
+                print(f"info score cp {eval_score} time {elapsed}")
                 print("bestmove", move.uci())
             else:
                 print("bestmove 0000")
