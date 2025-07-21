@@ -134,7 +134,8 @@ def minimax(board, depth, alpha, beta):
     if depth == 0 or board.is_game_over():
         return evaluate_board(board), None
 
-    key = (board.transposition_key(), depth)
+    key = (board.zobrist_hash(), depth)
+
     if key in TT:
         tt_depth, tt_score, tt_flag, tt_move = TT[key]
         if tt_depth >= depth:
