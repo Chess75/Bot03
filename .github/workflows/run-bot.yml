@@ -28,6 +28,9 @@ jobs:
       - name: Установить зависимости
         run: |
           pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install numpy torch python-chess
+        
 
       - name: Подставить токен
         run: |
