@@ -1,104 +1,112 @@
+#!/usr/bin/env python3
+import sys
 import chess
-import chess.engine
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import chess.polyglot
+import time
 
-class SimpleChessNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(12, 64, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.fc1 = nn.Linear(128*8*8, 256)
-        self.fc2 = nn.Linear(256, 1)
-    
-    def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = x.view(-1, 128*8*8)
-        x = F.relu(self.fc1(x))
-        return torch.tanh(self.fc2(x))
-
-def board_to_tensor(board):
-    piece_map = board.piece_map()
-    planes = np.zeros((12, 8, 8), dtype=np.float32)
-    piece_to_plane = {
-        chess.PAWN: 0, chess.KNIGHT:1, chess.BISHOP:2,
-        chess.ROOK:3, chess.QUEEN:4, chess.KING:5
-    }
-    for square, piece in piece_map.items():
-        plane = piece_to_plane[piece.piece_type]
-        if piece.color == chess.WHITE:
-            planes[plane][square//8][square%8] = 1
-        else:
-            planes[plane+6][square//8][square%8] = 1
-    return torch.tensor(planes).unsqueeze(0)  # batch 1
+# Автор Classic, движок SmileyMate
 
 class SmileyMateEngine:
-    def __init__(self, net, max_depth=3):
-        self.net = net
-        self.max_depth = max_depth
+    def __init__(self):
+        self.board = chess.Board()
 
     def evaluate(self, board):
-        # Нейросетевой прогноз позиции
-        with torch.no_grad():
-            tensor = board_to_tensor(board)
-            score = self.net(tensor).item()
-        return score
+        # Простейшая оценка: считаем материал
+        piece_values = {
+            chess.PAWN: 100,
+            chess.KNIGHT: 320,
+            chess.BISHOP: 330,
+            chess.ROOK: 500,
+            chess.QUEEN: 900,
+            chess.KING: 20000
+        }
+        eval = 0
+        for piece_type in piece_values:
+            eval += len(board.pieces(piece_type, chess.WHITE)) * piece_values[piece_type]
+            eval -= len(board.pieces(piece_type, chess.BLACK)) * piece_values[piece_type]
+        return eval if board.turn == chess.WHITE else -eval
 
-    def negamax(self, board, depth, alpha, beta, color):
+    def negamax(self, board, depth, alpha, beta):
         if depth == 0 or board.is_game_over():
-            return color * self.evaluate(board)
+            return self.evaluate(board)
 
         max_eval = -float('inf')
         for move in board.legal_moves:
             board.push(move)
-            eval = -self.negamax(board, depth-1, -beta, -alpha, -color)
+            score = -self.negamax(board, depth - 1, -beta, -alpha)
             board.pop()
-
-            if eval > max_eval:
-                max_eval = eval
-            if eval > alpha:
-                alpha = eval
+            if score > max_eval:
+                max_eval = score
+            if max_eval > alpha:
+                alpha = max_eval
             if alpha >= beta:
                 break
         return max_eval
 
-    def find_best_move(self, board):
+    def find_best_move(self, board, max_depth=3):
         best_move = None
+        max_eval = -float('inf')
         alpha = -float('inf')
         beta = float('inf')
-        color = 1 if board.turn == chess.WHITE else -1
-
         for move in board.legal_moves:
             board.push(move)
-            score = -self.negamax(board, self.max_depth-1, -beta, -alpha, -color)
+            score = -self.negamax(board, max_depth - 1, -beta, -alpha)
             board.pop()
-            if score > alpha:
-                alpha = score
+            if score > max_eval:
+                max_eval = score
                 best_move = move
+            if max_eval > alpha:
+                alpha = max_eval
         return best_move
 
+
+def main():
+    engine = SmileyMateEngine()
+
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.strip()
+
+        if line == "uci":
+            print("id name SmileyMate")
+            print("id author Classic")
+            print("uciok")
+        elif line == "isready":
+            print("readyok")
+        elif line.startswith("position"):
+            # position startpos moves e2e4 e7e5 ...
+            if "startpos" in line:
+                engine.board.reset()
+                if "moves" in line:
+                    moves_part = line.split("moves")[1].strip()
+                    moves = moves_part.split()
+                    for uci_move in moves:
+                        move = chess.Move.from_uci(uci_move)
+                        engine.board.push(move)
+            elif "fen" in line:
+                fen = line.split("fen")[1].strip()
+                if "moves" in fen:
+                    fen, moves_part = fen.split("moves")
+                    fen = fen.strip()
+                    moves = moves_part.strip().split()
+                else:
+                    moves = []
+                engine.board.set_fen(fen)
+                for uci_move in moves:
+                    move = chess.Move.from_uci(uci_move)
+                    engine.board.push(move)
+        elif line.startswith("go"):
+            # Простой поиск с фиксированной глубиной
+            best_move = engine.find_best_move(engine.board, max_depth=3)
+            if best_move is None:
+                print("bestmove 0000")  # нет ходов
+            else:
+                print(f"bestmove {best_move.uci()}")
+        elif line == "quit":
+            break
+
+
 if __name__ == "__main__":
-    import sys
-    board = chess.Board()
-    net = SimpleChessNet()
-    # Тут можно загрузить веса обученной нейросети (если есть)
-    engine = SmileyMateEngine(net, max_depth=3)
-
-    while not board.is_game_over():
-        print(board)
-        if board.turn == chess.WHITE:
-            move = engine.find_best_move(board)
-            print("Engine (White) move:", move)
-        else:
-            # Человеческий ход из stdin (для теста)
-            user_move = input("Your move: ")
-            move = chess.Move.from_uci(user_move)
-            if move not in board.legal_moves:
-                print("Illegal move!")
-                continue
-        board.push(move)
-
-    print("Game over:", board.result())
+    main()
