@@ -122,7 +122,8 @@ def evaluate_board(board):
 TT = {}
 
 def minimax(board, depth, alpha, beta, pv_line):
-    board_hash = (board.zobrist_hash(), board.turn, depth)
+    board_hash = (hash(board.fen()), depth)
+
     if board_hash in TT:
         return TT[board_hash]
 
