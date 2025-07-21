@@ -7,7 +7,7 @@ import time
 piece_values = {
     chess.PAWN: 100,
     chess.KNIGHT: 320,
-    chess.BISHOP: 330,
+    chess.BISHOP: 340,
     chess.ROOK: 500,
     chess.QUEEN: 900,
     chess.KING: 0
@@ -289,7 +289,7 @@ def main():
                 btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
 
             current_time = wtime if board.turn == chess.WHITE else btime
-            think_time = min(current_time * 0.02, 2.0) if current_time else 2.0
+            think_time = min(current_time * 0.02, 1.0) if current_time else 1.0
 
             start_time = time.time()
             move = choose_move(board, current_time or 2.0)
