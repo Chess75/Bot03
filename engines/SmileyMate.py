@@ -1,188 +1,104 @@
-#!/usr/bin/env python3
 import chess
 import chess.engine
-import chess.polyglot
-import time
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-# Автор Classic
-# Движок SmileyMate
-
-piece_values = {
-    chess.PAWN: 100,
-    chess.KNIGHT: 320,
-    chess.BISHOP: 330,
-    chess.ROOK: 500,
-    chess.QUEEN: 900,
-    chess.KING: 20000
-}
-
-# Пример piece-square tables для белых фигур (простые, для демонстрации)
-piece_square_tables = {
-    chess.PAWN: [
-         0,  0,  0,  0,  0,  0,  0,  0,
-        50, 50, 50, 50, 50, 50, 50, 50,
-        10, 10, 20, 30, 30, 20, 10, 10,
-         5,  5, 10, 27, 27, 10,  5,  5,
-         0,  0,  0, 25, 25,  0,  0,  0,
-         5, -5,-10,  0,  0,-10, -5,  5,
-         5, 10, 10,-25,-25, 10, 10,  5,
-         0,  0,  0,  0,  0,  0,  0,  0
-    ],
-    chess.KNIGHT: [
-        -50,-40,-30,-30,-30,-30,-40,-50,
-        -40,-20,  0,  0,  0,  0,-20,-40,
-        -30,  0, 10, 15, 15, 10,  0,-30,
-        -30,  5, 15, 20, 20, 15,  5,-30,
-        -30,  0, 15, 20, 20, 15,  0,-30,
-        -30,  5, 10, 15, 15, 10,  5,-30,
-        -40,-20,  0,  5,  5,  0,-20,-40,
-        -50,-40,-30,-30,-30,-30,-40,-50,
-    ],
-    # Можно добавить остальные, пока хватит
-}
-
-class SmileyMate:
+class SimpleChessNet(nn.Module):
     def __init__(self):
-        self.transposition_table = {}
-        self.nodes = 0
+        super().__init__()
+        self.conv1 = nn.Conv2d(12, 64, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.fc1 = nn.Linear(128*8*8, 256)
+        self.fc2 = nn.Linear(256, 1)
+    
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = x.view(-1, 128*8*8)
+        x = F.relu(self.fc1(x))
+        return torch.tanh(self.fc2(x))
 
-    def evaluate(self, board: chess.Board) -> int:
-        """Улучшенная функция оценки позиции"""
-        score = 0
-        for piece_type in piece_values:
-            white_pieces = board.pieces(piece_type, chess.WHITE)
-            black_pieces = board.pieces(piece_type, chess.BLACK)
-            score += piece_values[piece_type] * (len(white_pieces) - len(black_pieces))
-            # PST
-            if piece_type in piece_square_tables:
-                pst = piece_square_tables[piece_type]
-                for sq in white_pieces:
-                    score += pst[sq]
-                for sq in black_pieces:
-                    score -= pst[chess.square_mirror(sq)]
-        score += self.king_safety(board)
-        score += self.center_control(board)
-        score += self.pawn_structure(board)
-        return score if board.turn == chess.WHITE else -score
+def board_to_tensor(board):
+    piece_map = board.piece_map()
+    planes = np.zeros((12, 8, 8), dtype=np.float32)
+    piece_to_plane = {
+        chess.PAWN: 0, chess.KNIGHT:1, chess.BISHOP:2,
+        chess.ROOK:3, chess.QUEEN:4, chess.KING:5
+    }
+    for square, piece in piece_map.items():
+        plane = piece_to_plane[piece.piece_type]
+        if piece.color == chess.WHITE:
+            planes[plane][square//8][square%8] = 1
+        else:
+            planes[plane+6][square//8][square%8] = 1
+    return torch.tensor(planes).unsqueeze(0)  # batch 1
 
-    def king_safety(self, board: chess.Board) -> int:
-        safety = 0
-        for color in [chess.WHITE, chess.BLACK]:
-            king_sq = board.king(color)
-            if king_sq is None:
-                continue
-            attackers = board.attackers(not color, king_sq)
-            safety -= 30 * len(attackers) * (1 if color == chess.WHITE else -1)
-        return safety
+class SmileyMateEngine:
+    def __init__(self, net, max_depth=3):
+        self.net = net
+        self.max_depth = max_depth
 
-    def center_control(self, board: chess.Board) -> int:
-        center = [chess.D4, chess.D5, chess.E4, chess.E5]
-        score = 0
-        for sq in center:
-            score += 15 * (len(board.attackers(chess.WHITE, sq)) - len(board.attackers(chess.BLACK, sq)))
+    def evaluate(self, board):
+        # Нейросетевой прогноз позиции
+        with torch.no_grad():
+            tensor = board_to_tensor(board)
+            score = self.net(tensor).item()
         return score
 
-    def pawn_structure(self, board: chess.Board) -> int:
-        score = 0
-        for color in [chess.WHITE, chess.BLACK]:
-            pawns = list(board.pieces(chess.PAWN, color))
-            files = [chess.square_file(sq) for sq in pawns]
-            isolated = [f for f in files if files.count(f) == 1 and
-                        (f == 0 or files.count(f - 1) == 0) and
-                        (f == 7 or files.count(f + 1) == 0)]
-            double_pawns = [f for f in set(files) if files.count(f) > 1]
-            penalty = -20 * len(isolated) - 15 * len(double_pawns)
-            score += penalty if color == chess.WHITE else -penalty
-        return score
-
-    def quiescence(self, board: chess.Board, alpha: int, beta: int) -> int:
-        stand_pat = self.evaluate(board)
-        if stand_pat >= beta:
-            return beta
-        if alpha < stand_pat:
-            alpha = stand_pat
-
-        for move in board.legal_moves:
-            if board.is_capture(move):
-                board.push(move)
-                score = -self.quiescence(board, -beta, -alpha)
-                board.pop()
-
-                if score >= beta:
-                    return beta
-                if score > alpha:
-                    alpha = score
-        return alpha
-
-    def negamax(self, board: chess.Board, depth: int, alpha: int, beta: int) -> int:
-        self.nodes += 1
+    def negamax(self, board, depth, alpha, beta, color):
         if depth == 0 or board.is_game_over():
-            return self.quiescence(board, alpha, beta)
+            return color * self.evaluate(board)
 
-        board_hash = board.zobrist_hash()
-        if board_hash in self.transposition_table:
-            tt_depth, tt_value = self.transposition_table[board_hash]
-            if tt_depth >= depth:
-                return tt_value
-
-        max_eval = -999999
+        max_eval = -float('inf')
         for move in board.legal_moves:
             board.push(move)
-            eval = -self.negamax(board, depth - 1, -beta, -alpha)
+            eval = -self.negamax(board, depth-1, -beta, -alpha, -color)
             board.pop()
 
             if eval > max_eval:
                 max_eval = eval
-            if max_eval > alpha:
-                alpha = max_eval
+            if eval > alpha:
+                alpha = eval
             if alpha >= beta:
                 break
-
-        self.transposition_table[board_hash] = (depth, max_eval)
         return max_eval
 
-    def find_best_move(self, board: chess.Board, max_time=2.0):
+    def find_best_move(self, board):
         best_move = None
-        start = time.time()
-        depth = 1
-        best_score = -999999
+        alpha = -float('inf')
+        beta = float('inf')
+        color = 1 if board.turn == chess.WHITE else -1
 
-        while True:
-            self.nodes = 0
-            current_best_move = None
-            alpha = -999999
-            beta = 999999
-            for move in board.legal_moves:
-                board.push(move)
-                score = -self.negamax(board, depth - 1, -beta, -alpha)
-                board.pop()
-                if score > best_score:
-                    best_score = score
-                    current_best_move = move
-                if score > alpha:
-                    alpha = score
-            if current_best_move is not None:
-                best_move = current_best_move
-            if time.time() - start > max_time:
-                break
-            depth += 1
-
+        for move in board.legal_moves:
+            board.push(move)
+            score = -self.negamax(board, self.max_depth-1, -beta, -alpha, -color)
+            board.pop()
+            if score > alpha:
+                alpha = score
+                best_move = move
         return best_move
 
 if __name__ == "__main__":
+    import sys
     board = chess.Board()
-    engine = SmileyMate()
+    net = SimpleChessNet()
+    # Тут можно загрузить веса обученной нейросети (если есть)
+    engine = SmileyMateEngine(net, max_depth=3)
 
     while not board.is_game_over():
         print(board)
         if board.turn == chess.WHITE:
-            print("Classic (SmileyMate) thinking...")
-            move = engine.find_best_move(board, max_time=1.0)
+            move = engine.find_best_move(board)
+            print("Engine (White) move:", move)
         else:
-            print("Waiting for opponent move...")
-            # Тут можно заменить на ход из ввода или другого движка
-            moves = list(board.legal_moves)
-            move = moves[0]  # Для теста просто первый ход
-        print("Best move:", move)
+            # Человеческий ход из stdin (для теста)
+            user_move = input("Your move: ")
+            move = chess.Move.from_uci(user_move)
+            if move not in board.legal_moves:
+                print("Illegal move!")
+                continue
         board.push(move)
+
     print("Game over:", board.result())
