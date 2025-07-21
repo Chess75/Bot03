@@ -4,6 +4,7 @@ import chess
 import random
 import time
 
+# Значения фигур
 piece_values = {
     chess.PAWN: 100,
     chess.KNIGHT: 320,
@@ -13,7 +14,7 @@ piece_values = {
     chess.KING: 0
 }
 
-# Piece-square tables
+# Таблицы позиционного значения фигур (Piece-square tables)
 pst = {
     chess.PAWN: [
          0,  0,  0,  0,  0,  0,  0,  0,
@@ -76,6 +77,7 @@ pst = {
          20, 30, 10,  0,  0, 10, 30, 20,
     ]
 }
+
 pst_eg_king = [
     -50,-30,-30,-30,-30,-30,-30,-50,
     -30,-20,-10,-10,-10,-10,-20,-30,
@@ -86,6 +88,13 @@ pst_eg_king = [
     -30,-30,  0,  0,  0,  0,-30,-30,
     -50,-30,-30,-30,-30,-30,-30,-50
 ]
+
+# TT флаги
+EXACT = 0
+LOWERBOUND = 1
+UPPERBOUND = 2
+
+TT = {}
 
 def evaluate_board(board):
     if board.is_checkmate():
@@ -107,74 +116,87 @@ def evaluate_board(board):
             score -= pst_table[chess.square_mirror(sq)]
         phase += len(wp) + len(bp)
 
-    king_mirror = chess.square_mirror(board.king(chess.BLACK))
+    king_black = board.king(chess.BLACK)
     king_white = board.king(chess.WHITE)
+    king_black_mirrored = chess.square_mirror(king_black)
 
+    # Используем фазу для оценки позиции короля (окончание игры или нет)
     if phase < 12:
         score += pst_eg_king[king_white]
-        score -= pst_eg_king[king_mirror]
+        score -= pst_eg_king[king_black_mirrored]
     else:
         score += pst[chess.KING][king_white]
-        score -= pst[chess.KING][king_mirror]
+        score -= pst[chess.KING][king_black_mirrored]
 
     return score if board.turn else -score
 
-TT = {}
-
-def minimax(board, depth, alpha, beta, pv_line):
-    board_hash = (hash(board.fen()), depth)
-
-    if board_hash in TT:
-        return TT[board_hash]
-
+def minimax(board, depth, alpha, beta):
     if depth == 0 or board.is_game_over():
-        return evaluate_board(board)
+        return evaluate_board(board), None
+
+    key = (board.transposition_key(), depth)
+    if key in TT:
+        tt_depth, tt_score, tt_flag, tt_move = TT[key]
+        if tt_depth >= depth:
+            if tt_flag == EXACT:
+                return tt_score, tt_move
+            elif tt_flag == LOWERBOUND and tt_score > alpha:
+                alpha = max(alpha, tt_score)
+            elif tt_flag == UPPERBOUND and tt_score < beta:
+                beta = min(beta, tt_score)
+            if alpha >= beta:
+                return tt_score, tt_move
 
     best_score = -float('inf')
     best_move = None
 
+    # Сортировка ходов по захватам (примитивное move ordering)
     moves = sorted(board.legal_moves, key=lambda m: board.is_capture(m), reverse=True)
 
     for move in moves:
         board.push(move)
-        pv = []
-        score = -minimax(board, depth - 1, -beta, -alpha, pv)
+        score, _ = minimax(board, depth - 1, -beta, -alpha)
+        score = -score
         board.pop()
 
         if score > best_score:
             best_score = score
             best_move = move
-            pv_line.clear()
-            pv_line.append(move)
-            pv_line.extend(pv)
-
         alpha = max(alpha, score)
         if alpha >= beta:
             break
 
-    TT[board_hash] = best_score
-    return best_score
+    # Записываем в TT
+    if best_score <= alpha:
+        flag = UPPERBOUND
+    elif best_score >= beta:
+        flag = LOWERBOUND
+    else:
+        flag = EXACT
+
+    TT[key] = (depth, best_score, flag, best_move)
+    return best_score, best_move
 
 def choose_move(board, time_limit=2.0):
     start_time = time.time()
     best_move = None
-    best_pv = []
+    best_score = None
 
     for depth in range(1, 64):
         if time.time() - start_time > time_limit:
             break
-        pv = []
-        minimax(board, depth, -float('inf'), float('inf'), pv)
-        if pv:
-            best_move = pv[0]
-            best_pv = pv
+        score, move = minimax(board, depth, -float('inf'), float('inf'))
+        if move is not None:
+            best_move = move
+            best_score = score
         if time.time() - start_time > time_limit:
             break
 
     if best_move:
-        print("info pv", ' '.join(m.uci() for m in best_pv))
+        print(f"info score cp {best_score}")
         return best_move
-    return random.choice(list(board.legal_moves))
+    else:
+        return random.choice(list(board.legal_moves))
 
 def main():
     board = chess.Board()
@@ -192,6 +214,7 @@ def main():
             print("readyok")
         elif line.startswith("ucinewgame"):
             board.reset()
+            TT.clear()
         elif line.startswith("position"):
             parts = line.split()
             if "startpos" in parts:
@@ -202,6 +225,9 @@ def main():
                 fen = " ".join(parts[idx + 1:idx + 7])
                 board.set_fen(fen)
                 moves = parts[parts.index("moves") + 1:] if "moves" in parts else []
+            else:
+                moves = []
+
             for mv in moves:
                 board.push_uci(mv)
         elif line.startswith("go"):
