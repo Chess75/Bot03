@@ -1,9 +1,6 @@
 import chess
 import chess.polyglot
-import chess.syzygy
 import time
-import random
-from collections import defaultdict
 
 class TranspositionTable:
     def __init__(self):
@@ -22,7 +19,7 @@ class OpeningBook:
     def __init__(self, path="data/book.bin"):
         try:
             self.book = chess.polyglot.open_reader(path)
-        except:
+        except Exception:
             self.book = None
 
     def get_move(self, board):
@@ -31,12 +28,11 @@ class OpeningBook:
         try:
             entry = self.book.find(board)
             return entry.move
-        except:
+        except Exception:
             return None
 
 class PawnStructureEvaluator:
     def __init__(self):
-        # Example weights
         self.isolated_penalty = -10
         self.doubled_penalty = -8
         self.passed_bonus = 20
@@ -56,28 +52,26 @@ class PawnStructureEvaluator:
         for f in set(files):
             count = files.count(f)
             if count > 1:
-                score += self.doubled_penalty * (count-1)
+                score += self.doubled_penalty * (count - 1)
 
         # Passed pawns
         for p in pawns:
             if self.is_passed_pawn(board, p, color):
                 score += self.passed_bonus
 
-        # Backward pawns — simplified, can be extended
-        # ...
+        # Backward pawns — можно расширить при необходимости
 
         return score
 
     def is_passed_pawn(self, board, square, color):
-        # Checks if no enemy pawns block or attack in front
         enemy_color = not color
         file = chess.square_file(square)
         rank = chess.square_rank(square)
         if color == chess.WHITE:
-            ahead_squares = [chess.square(f, r) for f in range(file-1, file+2)
-                             for r in range(rank+1, 8) if 0 <= f <= 7]
+            ahead_squares = [chess.square(f, r) for f in range(file - 1, file + 2)
+                             for r in range(rank + 1, 8) if 0 <= f <= 7]
         else:
-            ahead_squares = [chess.square(f, r) for f in range(file-1, file+2)
+            ahead_squares = [chess.square(f, r) for f in range(file - 1, file + 2)
                              for r in range(0, rank) if 0 <= f <= 7]
 
         for sq in ahead_squares:
@@ -90,15 +84,17 @@ class MoveFilter:
         pass
 
     def is_good_sacrifice(self, board, move):
-        # Don't allow easy losses of material unless there's compensation
-        # Basic heuristic: If move captures but leaves attacker hanging, reject
-        # Can be expanded with deeper tactical checks
+        # Не допускаем простую потерю материала без компенсации
         if board.is_capture(move):
             after = board.copy()
             after.push(move)
-            attackers = after.attackers(not after.turn, after.to_square)
-            if len(attackers) > 0 and after.is_capture(move) and board.piece_at(move.to_square).piece_type > board.piece_at(move.from_square).piece_type:
-                return False
+            attackers = after.attackers(not after.turn, move.to_square)
+            # Если после хода атакуют нашу фигуру и захваченная фигура по цене меньше, считаем плохим
+            captured_piece = board.piece_at(move.to_square)
+            moving_piece = board.piece_at(move.from_square)
+            if attackers and captured_piece and moving_piece:
+                if captured_piece.piece_type > moving_piece.piece_type:
+                    return False
         return True
 
 class Engine:
@@ -114,23 +110,21 @@ class Engine:
         self.best_move = None
 
     def evaluate(self, board):
-        # Material
         material = self.material_eval(board)
-        # Pawn structure
         pawns_w = self.pawn_eval.evaluate(board, chess.WHITE)
         pawns_b = self.pawn_eval.evaluate(board, chess.BLACK)
         pawn_structure = pawns_w - pawns_b
-        # Mobility
         mobility = len(list(board.legal_moves)) if board.turn == chess.WHITE else -len(list(board.legal_moves))
-        # King safety — simplified
         king_safety = self.king_safety(board)
 
         total_eval = material + pawn_structure + mobility + king_safety
         return total_eval if board.turn == chess.WHITE else -total_eval
 
     def material_eval(self, board):
-        values = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
-                  chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0}
+        values = {
+            chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
+            chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0
+        }
         white_score = 0
         black_score = 0
         for piece_type in values:
@@ -139,12 +133,14 @@ class Engine:
         return white_score - black_score
 
     def king_safety(self, board):
-        # Simplified king safety: penalty for enemy pieces near king
         king_square = board.king(board.turn)
         enemy_color = not board.turn
         penalty = 0
+        if king_square is None:
+            return 0  # Например, если шахматная позиция окончена
         for sq in chess.SquareSet(chess.square_ring(king_square)):
-            if board.piece_at(sq) and board.piece_at(sq).color == enemy_color:
+            piece = board.piece_at(sq)
+            if piece and piece.color == enemy_color:
                 penalty -= 20
         return penalty
 
@@ -158,7 +154,7 @@ class Engine:
 
         tt_entry = self.tt.lookup(board.zobrist_hash(), depth)
         if tt_entry:
-            _, score, flag, move = tt_entry
+            stored_depth, score, flag, move = tt_entry
             if flag == 'EXACT':
                 return score
             elif flag == 'LOWERBOUND':
@@ -172,7 +168,6 @@ class Engine:
         best_move_local = None
 
         moves = list(board.legal_moves)
-        # Sort moves - captures and checks first
         moves.sort(key=lambda m: (board.is_capture(m), board.gives_check(m)), reverse=True)
 
         for move in moves:
@@ -195,11 +190,32 @@ class Engine:
             if alpha >= beta:
                 break
 
-        # Store in TT
+        # Определение флага для хранения в таблице
         flag = 'EXACT'
-        if max_eval <= alpha:
+        # Здесь надо поправить условие — alpha и beta на момент возврата могут измениться, 
+        # поэтому используем входные alpha и beta в функцию (alpha_orig, beta_orig)
+        # Но проще сохранить исходные alpha и beta в переменные перед циклом
+        # Сделаю это:
+        # (Внесу переменную alpha_orig, beta_orig)
+        # Из-за этого немного поменяю код:
+        # Сохраним alpha_orig и beta_orig в начале функции
+
+        # Перенесём выше:
+        # def search(self, board, depth, alpha, beta):
+        #    alpha_orig, beta_orig = alpha, beta
+
+        # Добавим это сейчас:
+
+        # В начале функции:
+        # alpha_orig, beta_orig = alpha, beta
+
+        # Так что исправим функцию сейчас полностью ниже.
+
+        # Правильный флаг:
+
+        if max_eval <= alpha_orig:
             flag = 'UPPERBOUND'
-        elif max_eval >= beta:
+        elif max_eval >= beta_orig:
             flag = 'LOWERBOUND'
 
         self.tt.store(board.zobrist_hash(), depth, max_eval, flag, best_move_local)
@@ -224,12 +240,10 @@ class Engine:
         return self.best_move
 
     def select_move(self, board, remaining_time):
-        # If book move available
         book_move = self.book.get_move(board)
         if book_move:
             return book_move
 
-        # Adapt depth to time
         if remaining_time < 6:
             self.max_depth = 3
         else:
@@ -237,9 +251,74 @@ class Engine:
 
         return self.iterative_deepening(board, max_time=min(remaining_time * 0.9, 2.0))
 
-# ----------- Example usage ------------
 
-import sys
+# ----------- Исправленная функция search с alpha_orig, beta_orig -----------
+
+def search(self, board, depth, alpha, beta):
+    alpha_orig, beta_orig = alpha, beta
+
+    if time.time() - self.start_time > self.time_limit:
+        raise TimeoutError
+
+    self.nodes += 1
+    if depth == 0 or board.is_game_over():
+        return self.evaluate(board)
+
+    tt_entry = self.tt.lookup(board.zobrist_hash(), depth)
+    if tt_entry:
+        stored_depth, score, flag, move = tt_entry
+        if flag == 'EXACT':
+            return score
+        elif flag == 'LOWERBOUND':
+            alpha = max(alpha, score)
+        elif flag == 'UPPERBOUND':
+            beta = min(beta, score)
+        if alpha >= beta:
+            return score
+
+    max_eval = float('-inf')
+    best_move_local = None
+
+    moves = list(board.legal_moves)
+    moves.sort(key=lambda m: (board.is_capture(m), board.gives_check(m)), reverse=True)
+
+    for move in moves:
+        if not self.move_filter.is_good_sacrifice(board, move):
+            continue
+
+        board.push(move)
+        try:
+            score = -self.search(board, depth - 1, -beta, -alpha)
+        except TimeoutError:
+            board.pop()
+            raise
+        board.pop()
+
+        if score > max_eval:
+            max_eval = score
+            best_move_local = move
+
+        alpha = max(alpha, score)
+        if alpha >= beta:
+            break
+
+    flag = 'EXACT'
+    if max_eval <= alpha_orig:
+        flag = 'UPPERBOUND'
+    elif max_eval >= beta_orig:
+        flag = 'LOWERBOUND'
+
+    self.tt.store(board.zobrist_hash(), depth, max_eval, flag, best_move_local)
+
+    if depth == self.max_depth:
+        self.best_move = best_move_local
+
+    return max_eval
+
+# Чтобы использовать исправленную функцию, нужно заменить метод в Engine:
+Engine.search = search
+
+# ----------- Пример использования ------------
 
 def main():
     board = chess.Board()
@@ -247,14 +326,13 @@ def main():
     while not board.is_game_over():
         print(board)
         print("Thinking...")
-        # For testing, assume 10 seconds remaining
+        # Для теста считаем, что осталось 10 секунд
         move = engine.select_move(board, remaining_time=10)
         print(f"Engine plays: {move}")
         board.push(move)
-        # For demo, break after a few moves
+        # Для демонстрации — выйдем после 20 ходов
         if board.fullmove_number > 20:
             break
 
 if __name__ == "__main__":
     main()
-
