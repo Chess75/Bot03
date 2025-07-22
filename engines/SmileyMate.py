@@ -3,7 +3,6 @@ import sys
 import chess
 import random
 import time
-from collections import defaultdict
 
 piece_values = {
     chess.PAWN: 100,
@@ -11,78 +10,87 @@ piece_values = {
     chess.BISHOP: 330,
     chess.ROOK: 500,
     chess.QUEEN: 900,
-    chess.KING: 0
+    chess.KING: 20000
 }
 
-# Piece-Square Tables (PST) для позиционной оценки (белая сторона),
-# для черных используется зеркальное отображение
 piece_square_tables = {
     chess.PAWN: [
-         0,  0,  0,  0,  0,  0,  0,  0,
-         5, 10, 10,-20,-20, 10, 10,  5,
-         5, -5,-10,  0,  0,-10, -5,  5,
-         0,  0,  0, 20, 20,  0,  0,  0,
-         5,  5, 10, 25, 25, 10,  5,  5,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        5, 10, 10, -20, -20, 10, 10, 5,
+        5, -5, -10, 0, 0, -10, -5, 5,
+        0, 0, 0, 20, 20, 0, 0, 0,
+        5, 5, 10, 25, 25, 10, 5, 5,
         10, 10, 20, 30, 30, 20, 10, 10,
         50, 50, 50, 50, 50, 50, 50, 50,
-         0,  0,  0,  0,  0,  0,  0,  0
+        0, 0, 0, 0, 0, 0, 0, 0
     ],
     chess.KNIGHT: [
-        -50,-40,-30,-30,-30,-30,-40,-50,
-        -40,-20,  0,  5,  5,  0,-20,-40,
-        -30,  5, 10, 15, 15, 10,  5,-30,
-        -30,  0, 15, 20, 20, 15,  0,-30,
-        -30,  5, 15, 20, 20, 15,  5,-30,
-        -30,  0, 10, 15, 15, 10,  0,-30,
-        -40,-20,  0,  0,  0,  0,-20,-40,
-        -50,-40,-30,-30,-30,-30,-40,-50
+        -50, -40, -30, -30, -30, -30, -40, -50,
+        -40, -20, 0, 5, 5, 0, -20, -40,
+        -30, 5, 10, 15, 15, 10, 5, -30,
+        -30, 0, 15, 20, 20, 15, 0, -30,
+        -30, 5, 15, 20, 20, 15, 5, -30,
+        -30, 0, 10, 15, 15, 10, 0, -30,
+        -40, -20, 0, 0, 0, 0, -20, -40,
+        -50, -40, -30, -30, -30, -30, -40, -50
     ],
     chess.BISHOP: [
-        -20,-10,-10,-10,-10,-10,-10,-20,
-        -10,  5,  0,  0,  0,  0,  5,-10,
-        -10, 10, 10, 10, 10, 10, 10,-10,
-        -10,  0, 10, 10, 10, 10,  0,-10,
-        -10,  5,  5, 10, 10,  5,  5,-10,
-        -10,  0,  5, 10, 10,  5,  0,-10,
-        -10,  0,  0,  0,  0,  0,  0,-10,
-        -20,-10,-10,-10,-10,-10,-10,-20
+        -20, -10, -10, -10, -10, -10, -10, -20,
+        -10, 5, 0, 0, 0, 0, 5, -10,
+        -10, 10, 10, 10, 10, 10, 10, -10,
+        -10, 0, 10, 10, 10, 10, 0, -10,
+        -10, 5, 5, 10, 10, 5, 5, -10,
+        -10, 0, 5, 10, 10, 5, 0, -10,
+        -10, 0, 0, 0, 0, 0, 0, -10,
+        -20, -10, -10, -10, -10, -10, -10, -20
     ],
     chess.ROOK: [
-         0,  0,  0,  5,  5,  0,  0,  0,
-        -5,  0,  0,  0,  0,  0,  0, -5,
-        -5,  0,  0,  0,  0,  0,  0, -5,
-        -5,  0,  0,  0,  0,  0,  0, -5,
-        -5,  0,  0,  0,  0,  0,  0, -5,
-        -5,  0,  0,  0,  0,  0,  0, -5,
-         5, 10, 10, 10, 10, 10, 10,  5,
-         0,  0,  0,  0,  0,  0,  0,  0
+        0, 0, 0, 5, 5, 0, 0, 0,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        5, 10, 10, 10, 10, 10, 10, 5,
+        0, 0, 0, 0, 0, 0, 0, 0
     ],
     chess.QUEEN: [
-        -20,-10,-10, -5, -5,-10,-10,-20,
-        -10,  0,  5,  0,  0,  0,  0,-10,
-        -10,  5,  5,  5,  5,  5,  0,-10,
-         -5,  0,  5,  5,  5,  5,  0, -5,
-          0,  0,  5,  5,  5,  5,  0, -5,
-        -10,  0,  5,  5,  5,  5,  0,-10,
-        -10,  0,  0,  0,  0,  0,  0,-10,
-        -20,-10,-10, -5, -5,-10,-10,-20
+        -20, -10, -10, -5, -5, -10, -10, -20,
+        -10, 0, 0, 0, 0, 0, 0, -10,
+        -10, 0, 5, 5, 5, 5, 0, -10,
+        -5, 0, 5, 5, 5, 5, 0, -5,
+        0, 0, 5, 5, 5, 5, 0, -5,
+        -10, 5, 5, 5, 5, 5, 0, -10,
+        -10, 0, 5, 0, 0, 0, 0, -10,
+        -20, -10, -10, -5, -5, -10, -10, -20
     ],
     chess.KING: [
-        20, 30, 10,  0,  0, 10, 30, 20,
-        20, 20,  0,  0,  0,  0, 20, 20,
-       -10,-20,-20,-20,-20,-20,-20,-10,
-       -20,-30,-30,-40,-40,-30,-30,-20,
-       -30,-40,-40,-50,-50,-40,-40,-30,
-       -30,-40,-40,-50,-50,-40,-40,-30,
-       -30,-40,-40,-50,-50,-40,-40,-30,
-       -30,-40,-40,-50,-50,-40,-40,-30
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -20, -30, -30, -40, -40, -30, -30, -20,
+        -10, -20, -20, -20, -20, -20, -20, -10,
+        20, 20, 0, 0, 0, 0, 20, 20,
+        20, 30, 10, 0, 0, 10, 30, 20
     ]
 }
 
-center_squares = [chess.D4, chess.D5, chess.E4, chess.E5]
+center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 
-def evaluate_board(board, move_history=None):
-    # Немедленная проверка на мат/пат
+def square_area(square, radius):
+    file = chess.square_file(square)
+    rank = chess.square_rank(square)
+    area = []
+    for df in range(-radius, radius + 1):
+        for dr in range(-radius, radius + 1):
+            f = file + df
+            r = rank + dr
+            if 0 <= f < 8 and 0 <= r < 8:
+                area.append(chess.square(f, r))
+    return area
+
+def evaluate_board(board):
     if board.is_checkmate():
         return -100000 if board.turn else 100000
     if board.is_stalemate() or board.is_insufficient_material():
@@ -90,129 +98,170 @@ def evaluate_board(board, move_history=None):
 
     score = 0
 
-    # Материал и позиционная оценка по PST
     for piece_type in piece_values:
-        for square in board.pieces(piece_type, chess.WHITE):
-            score += piece_values[piece_type]
-            score += piece_square_tables[piece_type][square]
-        for square in board.pieces(piece_type, chess.BLACK):
-            score -= piece_values[piece_type]
-            score -= piece_square_tables[piece_type][chess.square_mirror(square)]
+        white_pieces = board.pieces(piece_type, chess.WHITE)
+        black_pieces = board.pieces(piece_type, chess.BLACK)
+        score += len(white_pieces) * piece_values[piece_type]
+        score -= len(black_pieces) * piece_values[piece_type]
 
-    # Безопасность короля: количество дружественных фигур рядом с королём
+    for piece_type, table in piece_square_tables.items():
+        for square in board.pieces(piece_type, chess.WHITE):
+            score += table[square]
+        for square in board.pieces(piece_type, chess.BLACK):
+            score -= table[chess.square_mirror(square)]
+
     def king_safety(color):
-        king_sq = board.king(color)
-        if king_sq is None:
+        king_square = board.king(color)
+        if king_square is None:
             return -9999
-        rank = chess.square_rank(king_sq)
-        file = chess.square_file(king_sq)
-        friendly = 0
-        for dr in [-1, 0, 1]:
-            for df in [-1, 0, 1]:
-                if dr == 0 and df == 0:
-                    continue
-                r = rank + dr
-                f = file + df
-                if 0 <= r <= 7 and 0 <= f <= 7:
-                    sq = chess.square(f, r)
-                    piece = board.piece_at(sq)
-                    if piece and piece.color == color:
-                        friendly += 1
-        return friendly * 10  # вес безопасности короля увеличен
+        danger = 0
+        attackers = board.attackers(not color, king_square)
+        danger -= len(attackers) * 20
+        for square in square_area(king_square, 1):
+            piece = board.piece_at(square)
+            if piece and piece.color == color:
+                danger += 5
+        return danger
 
     score += king_safety(chess.WHITE)
     score -= king_safety(chess.BLACK)
 
-    # Контроль центра (бонус за занятые центральные поля)
-    for sq in center_squares:
-        piece = board.piece_at(sq)
+    for square in center_squares:
+        piece = board.piece_at(square)
         if piece:
-            score += 20 if piece.color == chess.WHITE else -20
+            score += 10 if piece.color == chess.WHITE else -10
 
-    # Пешечная структура — штраф за изолированные и удвоенные пешки
-    def pawn_structure(color):
-        pawns = board.pieces(chess.PAWN, color)
-        files = defaultdict(int)
-        penalties = 0
-        for square in pawns:
-            file = chess.square_file(square)
-            files[file] += 1
-        for f in files:
-            if files[f] > 1:
-                penalties += 15  # удвоенные пешки — больший штраф
-            isolated = all(files.get(adj, 0) == 0 for adj in [f - 1, f + 1])
-            if isolated:
-                penalties += 20  # изолированные пешки — более серьезный штраф
-        return -penalties if color == chess.WHITE else penalties
-
-    score += pawn_structure(chess.WHITE)
-    score -= pawn_structure(chess.BLACK)
-
-    # Штраф за повторные ходы одной фигуры в дебюте (темп)
-    if move_history:
-        moved_pieces = defaultdict(int)
-        for move in move_history[-8:]:
-            piece = board.piece_at(move.from_square)
-            if piece:
-                moved_pieces[(piece.piece_type, piece.color, move.from_square)] += 1
-        for (ptype, color, _), count in moved_pieces.items():
-            if count > 1:
-                score += -10 * count if color == chess.WHITE else 10 * count
+    score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
 
     return score
 
-def minimax(board, depth, alpha, beta, is_maximizing, move_history=None):
-    if depth == 0 or board.is_game_over():
-        return evaluate_board(board, move_history), None
+def move_score(board, move):
+    score = 0
+    if board.is_capture(move):
+        captured_piece = board.piece_at(move.to_square)
+        if captured_piece:
+            score += 10 * piece_values[captured_piece.piece_type]
+    if move.to_square in center_squares:
+        score += 20
+    piece = board.piece_at(move.from_square)
+    if piece and piece.piece_type == chess.PAWN:
+        rank = chess.square_rank(move.to_square)
+        score += rank * 5 if piece.color == chess.WHITE else (7 - rank) * 5
+    return score
 
+def negamax(board, depth, alpha, beta, color):
+    if depth == 0 or board.is_game_over():
+        return color * evaluate_board(board)
+
+    max_eval = -float('inf')
+    legal_moves = sorted(board.legal_moves, key=lambda move: move_score(board, move), reverse=True)
+
+    for move in legal_moves:
+        board.push(move)
+        eval = -negamax(board, depth - 1, -beta, -alpha, -color)
+        board.pop()
+        max_eval = max(max_eval, eval)
+        alpha = max(alpha, eval)
+        if alpha >= beta:
+            break
+    return max_eval
+
+def choose_move(board, max_time=2.0):
+    start = time.time()
     best_move = None
-    if is_maximizing:
-        max_eval = -float('inf')
-        for move in board.legal_moves:
+    best_score = -float('inf')
+    color = 1 if board.turn == chess.WHITE else -1
+    legal_moves = list(board.legal_moves)
+    legal_moves.sort(key=lambda move: move_score(board, move), reverse=True)
+
+    depth = 1
+    while True:
+        current_best = None
+        current_best_score = -float('inf')
+
+        for move in legal_moves:
+            if time.time() - start > max_time:
+                return best_move if best_move else random.choice(legal_moves)
+
             board.push(move)
-            eval_score, _ = minimax(board, depth - 1, alpha, beta, False, (move_history or []) + [move])
+            score = -negamax(board, depth - 1, -float('inf'), float('inf'), -color)
             board.pop()
-            if eval_score > max_eval:
-                max_eval = eval_score
-                best_move = move
-            alpha = max(alpha, eval_score)
-            if beta <= alpha:
-                break
-        return max_eval, best_move
-    else:
-        min_eval = float('inf')
-        for move in board.legal_moves:
-            board.push(move)
-            eval_score, _ = minimax(board, depth - 1, alpha, beta, True, (move_history or []) + [move])
-            board.pop()
-            if eval_score < min_eval:
-                min_eval = eval_score
-                best_move = move
-            beta = min(beta, eval_score)
-            if beta <= alpha:
-                break
-        return min_eval, best_move
+
+            if score > current_best_score:
+                current_best_score = score
+                current_best = move
+
+        if time.time() - start > max_time:
+            break
+
+        best_move = current_best
+        best_score = current_best_score
+        depth += 1
+
+    return best_move
 
 def main():
     board = chess.Board()
-    while not board.is_game_over():
-        if board.turn == chess.WHITE:
-            # Белые: наш движок
-            _, move = minimax(board, 3, -float('inf'), float('inf'), True)
-            if move is None:
-                break
-            board.push(move)
-            print(f"White plays: {board.san(move)}")
-        else:
-            # Черные: случайный ход (можешь заменить на более сильного соперника)
-            move = random.choice(list(board.legal_moves))
-            board.push(move)
-            print(f"Black plays: {board.san(move)}")
 
-        print(board)
-        print("-" * 40)
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.strip()
 
-    print("Game over:", board.result())
+        if line == "uci":
+            print("id name SmileyMate")
+            print("id author Classic")
+            print("uciok")
+        elif line == "isready":
+            print("readyok")
+        elif line.startswith("ucinewgame"):
+            board.reset()
+        elif line.startswith("position"):
+            parts = line.split(" ")
+            if "startpos" in parts:
+                board.reset()
+                if "moves" in parts:
+                    moves_index = parts.index("moves")
+                    moves = parts[moves_index + 1:]
+                    for mv in moves:
+                        board.push_uci(mv)
+            elif "fen" in parts:
+                fen_index = parts.index("fen")
+                fen_str = " ".join(parts[fen_index + 1:fen_index + 7])
+                board.set_fen(fen_str)
+                if "moves" in parts:
+                    moves_index = parts.index("moves")
+                    moves = parts[moves_index + 1:]
+                    for mv in moves:
+                        board.push_uci(mv)
+        elif line.startswith("go"):
+            tokens = line.split()
+            wtime = btime = None
+            if "wtime" in tokens:
+                wtime = int(tokens[tokens.index("wtime") + 1]) / 1000.0
+            if "btime" in tokens:
+                btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
+
+            current_time = wtime if board.turn == chess.WHITE else btime
+            think_time = max(0.1, min(current_time * 0.015, 3.0)) if current_time else 2.0
+
+            start_time = time.time()
+            move = choose_move(board, think_time)
+            elapsed = int((time.time() - start_time) * 1000)
+
+            if move is not None:
+                board.push(move)
+                eval_score = evaluate_board(board)
+                board.pop()
+                print(f"info score cp {eval_score} time {elapsed}")
+                print("bestmove", move.uci())
+            else:
+                print("bestmove 0000")
+        elif line == "quit":
+            break
+
+        sys.stdout.flush()
 
 if __name__ == "__main__":
     main()
