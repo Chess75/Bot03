@@ -14,8 +14,8 @@ piece_values = {
     chess.KING: 0
 }
 
-# Full PST for all pieces (WHITE perspective)
-# Black uses mirror
+# Piece-Square Tables (PST) для позиционной оценки (белая сторона),
+# для черных используется зеркальное отображение
 piece_square_tables = {
     chess.PAWN: [
          0,  0,  0,  0,  0,  0,  0,  0,
@@ -82,6 +82,7 @@ piece_square_tables = {
 center_squares = [chess.D4, chess.D5, chess.E4, chess.E5]
 
 def evaluate_board(board, move_history=None):
+    # Немедленная проверка на мат/пат
     if board.is_checkmate():
         return -100000 if board.turn else 100000
     if board.is_stalemate() or board.is_insufficient_material():
@@ -89,6 +90,7 @@ def evaluate_board(board, move_history=None):
 
     score = 0
 
+    # Материал и позиционная оценка по PST
     for piece_type in piece_values:
         for square in board.pieces(piece_type, chess.WHITE):
             score += piece_values[piece_type]
@@ -97,14 +99,14 @@ def evaluate_board(board, move_history=None):
             score -= piece_values[piece_type]
             score -= piece_square_tables[piece_type][chess.square_mirror(square)]
 
-    # King safety (nearby friendly pieces)
-    def king_safety(board, color):
+    # Безопасность короля: количество дружественных фигур рядом с королём
+    def king_safety(color):
         king_sq = board.king(color)
         if king_sq is None:
             return -9999
-        nearby_squares = []
         rank = chess.square_rank(king_sq)
         file = chess.square_file(king_sq)
+        friendly = 0
         for dr in [-1, 0, 1]:
             for df in [-1, 0, 1]:
                 if dr == 0 and df == 0:
@@ -112,20 +114,22 @@ def evaluate_board(board, move_history=None):
                 r = rank + dr
                 f = file + df
                 if 0 <= r <= 7 and 0 <= f <= 7:
-                    nearby_squares.append(chess.square(f, r))
-        friendly = sum(1 for sq in nearby_squares if board.piece_at(sq) and board.color_at(sq) == color)
-        return friendly * 5
+                    sq = chess.square(f, r)
+                    piece = board.piece_at(sq)
+                    if piece and piece.color == color:
+                        friendly += 1
+        return friendly * 10  # вес безопасности короля увеличен
 
-    score += king_safety(board, chess.WHITE)
-    score -= king_safety(board, chess.BLACK)
+    score += king_safety(chess.WHITE)
+    score -= king_safety(chess.BLACK)
 
-    # Center control
+    # Контроль центра (бонус за занятые центральные поля)
     for sq in center_squares:
         piece = board.piece_at(sq)
         if piece:
-            score += 10 if piece.color == chess.WHITE else -10
+            score += 20 if piece.color == chess.WHITE else -20
 
-    # Pawn structure
+    # Пешечная структура — штраф за изолированные и удвоенные пешки
     def pawn_structure(color):
         pawns = board.pieces(chess.PAWN, color)
         files = defaultdict(int)
@@ -135,16 +139,16 @@ def evaluate_board(board, move_history=None):
             files[file] += 1
         for f in files:
             if files[f] > 1:
-                penalties += 10  # doubled
+                penalties += 15  # удвоенные пешки — больший штраф
             isolated = all(files.get(adj, 0) == 0 for adj in [f - 1, f + 1])
             if isolated:
-                penalties += 10
+                penalties += 20  # изолированные пешки — более серьезный штраф
         return -penalties if color == chess.WHITE else penalties
 
     score += pawn_structure(chess.WHITE)
     score -= pawn_structure(chess.BLACK)
 
-    # Tempo penalty: moving same piece too often in opening
+    # Штраф за повторные ходы одной фигуры в дебюте (темп)
     if move_history:
         moved_pieces = defaultdict(int)
         for move in move_history[-8:]:
@@ -153,134 +157,62 @@ def evaluate_board(board, move_history=None):
                 moved_pieces[(piece.piece_type, piece.color, move.from_square)] += 1
         for (ptype, color, _), count in moved_pieces.items():
             if count > 1:
-                penalty = (count - 1) * 5
-                score -= penalty if color == chess.WHITE else -penalty
-
-    # Early queen development
-    for color in [chess.WHITE, chess.BLACK]:
-        queen_sq = next(iter(board.pieces(chess.QUEEN, color)), None)
-        if queen_sq is not None and (queen_sq not in [chess.D1, chess.D8]):
-            if board.fullmove_number < 10:
-                score -= 15 if color == chess.WHITE else -15
+                score += -10 * count if color == chess.WHITE else 10 * count
 
     return score
 
-def order_moves(board):
-    captures = []
-    quiets = []
-    for move in board.legal_moves:
-        if board.is_capture(move):
-            captures.append(move)
-        else:
-            quiets.append(move)
-    return captures + quiets
-
-def negamax(board, depth, alpha, beta, color, move_history):
+def minimax(board, depth, alpha, beta, is_maximizing, move_history=None):
     if depth == 0 or board.is_game_over():
-        return color * evaluate_board(board, move_history)
+        return evaluate_board(board, move_history), None
 
-    max_eval = -float('inf')
-    for move in order_moves(board):
-        board.push(move)
-        move_history.append(move)
-        eval = -negamax(board, depth - 1, -beta, -alpha, -color, move_history)
-        move_history.pop()
-        board.pop()
-        max_eval = max(max_eval, eval)
-        alpha = max(alpha, eval)
-        if alpha >= beta:
-            break
-    return max_eval
-
-def choose_move(board, time_limit=2.0):
-    start_time = time.time()
-    best_score = -float('inf')
-    best_moves = []
-    move_history = []
-
-    for move in order_moves(board):
-        if time.time() - start_time > time_limit:
-            break
-        board.push(move)
-        move_history.append(move)
-        score = -negamax(board, 2, -float('inf'), float('inf'), -1 if board.turn else 1, move_history)
-        move_history.pop()
-        board.pop()
-
-        if score > best_score:
-            best_score = score
-            best_moves = [move]
-        elif score == best_score:
-            best_moves.append(move)
-
-    if not best_moves:
-        return random.choice(list(board.legal_moves))
-    return random.choice(best_moves)
+    best_move = None
+    if is_maximizing:
+        max_eval = -float('inf')
+        for move in board.legal_moves:
+            board.push(move)
+            eval_score, _ = minimax(board, depth - 1, alpha, beta, False, (move_history or []) + [move])
+            board.pop()
+            if eval_score > max_eval:
+                max_eval = eval_score
+                best_move = move
+            alpha = max(alpha, eval_score)
+            if beta <= alpha:
+                break
+        return max_eval, best_move
+    else:
+        min_eval = float('inf')
+        for move in board.legal_moves:
+            board.push(move)
+            eval_score, _ = minimax(board, depth - 1, alpha, beta, True, (move_history or []) + [move])
+            board.pop()
+            if eval_score < min_eval:
+                min_eval = eval_score
+                best_move = move
+            beta = min(beta, eval_score)
+            if beta <= alpha:
+                break
+        return min_eval, best_move
 
 def main():
     board = chess.Board()
-    move_history = []
+    while not board.is_game_over():
+        if board.turn == chess.WHITE:
+            # Белые: наш движок
+            _, move = minimax(board, 3, -float('inf'), float('inf'), True)
+            if move is None:
+                break
+            board.push(move)
+            print(f"White plays: {board.san(move)}")
+        else:
+            # Черные: случайный ход (можешь заменить на более сильного соперника)
+            move = random.choice(list(board.legal_moves))
+            board.push(move)
+            print(f"Black plays: {board.san(move)}")
 
-    while True:
-        line = sys.stdin.readline()
-        if not line:
-            break
-        line = line.strip()
+        print(board)
+        print("-" * 40)
 
-        if line == "uci":
-            print("id name SmileyMate")
-            print("id author Classic")
-            print("uciok")
-        elif line == "isready":
-            print("readyok")
-        elif line.startswith("ucinewgame"):
-            board.reset()
-            move_history.clear()
-        elif line.startswith("position"):
-            parts = line.split(" ")
-            if "startpos" in parts:
-                board.reset()
-                if "moves" in parts:
-                    for mv in parts[parts.index("moves")+1:]:
-                        board.push_uci(mv)
-                        move_history.append(chess.Move.from_uci(mv))
-            elif "fen" in parts:
-                fen_index = parts.index("fen")
-                fen = " ".join(parts[fen_index + 1:fen_index + 7])
-                board.set_fen(fen)
-                if "moves" in parts:
-                    for mv in parts[parts.index("moves")+1:]:
-                        board.push_uci(mv)
-                        move_history.append(chess.Move.from_uci(mv))
-        elif line.startswith("go"):
-            tokens = line.split()
-            wtime = btime = None
-            if "wtime" in tokens:
-                wtime = int(tokens[tokens.index("wtime") + 1]) / 1000.0
-            if "btime" in tokens:
-                btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
-            time_left = wtime if board.turn == chess.WHITE else btime
-            think_time = min(2.0, (time_left or 5.0) * 0.02)
-
-            start = time.time()
-            move = choose_move(board, think_time)
-            elapsed = int((time.time() - start) * 1000)
-
-            if move:
-                board.push(move)
-                move_history.append(move)
-                score = evaluate_board(board, move_history)
-                board.pop()
-                move_history.pop()
-                print(f"info score cp {score} time {elapsed}")
-                print(f"bestmove {move.uci()}")
-            else:
-                print("bestmove 0000")
-        elif line == "quit":
-            break
-
-        sys.stdout.flush()
+    print("Game over:", board.result())
 
 if __name__ == "__main__":
     main()
-
