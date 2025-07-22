@@ -98,16 +98,26 @@ def evaluate_board(board, move_history=None):
             score -= piece_square_tables[piece_type][chess.square_mirror(square)]
 
     # King safety (nearby friendly pieces)
-    def king_safety(color):
+    def king_safety(board, color):
         king_sq = board.king(color)
         if king_sq is None:
             return -9999
-        nearby = chess.SquareSet(chess.square_ring(king_sq))
-        friendly = sum(1 for sq in nearby if board.piece_at(sq) and board.color_at(sq) == color)
+        nearby_squares = []
+        rank = chess.square_rank(king_sq)
+        file = chess.square_file(king_sq)
+        for dr in [-1, 0, 1]:
+            for df in [-1, 0, 1]:
+                if dr == 0 and df == 0:
+                    continue
+                r = rank + dr
+                f = file + df
+                if 0 <= r <= 7 and 0 <= f <= 7:
+                    nearby_squares.append(chess.square(f, r))
+        friendly = sum(1 for sq in nearby_squares if board.piece_at(sq) and board.color_at(sq) == color)
         return friendly * 5
 
-    score += king_safety(chess.WHITE)
-    score -= king_safety(chess.BLACK)
+    score += king_safety(board, chess.WHITE)
+    score -= king_safety(board, chess.BLACK)
 
     # Center control
     for sq in center_squares:
@@ -219,7 +229,7 @@ def main():
 
         if line == "uci":
             print("id name SmileyMate")
-            print("id author ClassicGPT")
+            print("id author Classic")
             print("uciok")
         elif line == "isready":
             print("readyok")
@@ -273,3 +283,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
