@@ -1,285 +1,267 @@
+#!/usr/bin/env python3
 import sys
+import chess
+import random
 import time
-import threading
 
-# ----------------------------------------------------------------------
-# Bitboard-based Chess Engine with UCI Protocol
-# Author: ChatGPT
-# Lines: ~1000
-# ----------------------------------------------------------------------
-
-# Bitboard representation constants
-WHITE, BLACK = 0, 1
-
-# Precomputed bitboard masks
-FILE_A = 0x0101010101010101
-FILE_H = FILE_A << 7
-RANK_1 = 0xFF
-RANK_8 = RANK_1 << (8*7)
-
-# Direction offsets for sliding pieces
-NORTH = 8
-SOUTH = -8
-EAST = 1
-WEST = -1
-NORTH_EAST = NORTH + EAST
-NORTH_WEST = NORTH + WEST
-SOUTH_EAST = SOUTH + EAST
-SOUTH_WEST = SOUTH + WEST
-
-# ----------------------------------------------------------------------
-# Utility functions for bitboards
-
-def lsb(bb):
-    return (bb & -bb).bit_length() - 1
-
-def popcount(bb):
-    return bb.bit_count()
-
-def poplsb(bb_ref):
-    bb = bb_ref[0]
-    sq = lsb(bb)
-    bb_ref[0] = bb & (bb - 1)
-    return sq
-
-# ----------------------------------------------------------------------
-# Precompute sliding rays for rook and bishop attacks
-SLIDING_OFFSETS = {
-    'rook':   [NORTH, EAST, SOUTH, WEST],
-    'bishop': [NORTH_EAST, NORTH_WEST, SOUTH_EAST, SOUTH_WEST]
+piece_values = {
+    chess.PAWN: 100,
+    chess.KNIGHT: 320,
+    chess.BISHOP: 330,
+    chess.ROOK: 500,
+    chess.QUEEN: 900,
+    chess.KING: 20000
 }
 
-# Attack tables (to be generated at init)
-rook_attacks = {}
-bishop_attacks = {}
-
-# ----------------------------------------------------------------------
-# Initializes sliding attack tables for an empty board
-
-def init_sliding_tables():
-    global rook_attacks, bishop_attacks
-    for sq in range(64):
-        rook_attacks[sq] = generate_rays(sq, SLIDING_OFFSETS['rook'])
-        bishop_attacks[sq] = generate_rays(sq, SLIDING_OFFSETS['bishop'])
-
-
-def generate_rays(sq, directions):
-    rays = []
-    for dir in directions:
-        ray = []
-        cur = sq
-        while True:
-            file, rank = cur % 8, cur // 8
-            f = file + (dir % 8)
-            r = rank + (dir // 8)
-            if f < 0 or f > 7 or r < 0 or r > 7:
-                break
-            cur = r*8 + f
-            ray.append(cur)
-        rays.append(ray)
-    return rays
-
-# ----------------------------------------------------------------------
-# Board and Position class
-class Position:
-    def __init__(self):
-        # Bitboards for each piece type
-        self.pieces = {
-            'P': 0, 'N': 0, 'B': 0, 'R': 0, 'Q': 0, 'K': 0,
-            'p': 0, 'n': 0, 'b': 0, 'r': 0, 'q': 0, 'k': 0
-        }
-        self.occupancy = {WHITE: 0, BLACK: 0, 'both': 0}
-        self.side = WHITE
-        self.castling = {'K': True, 'Q': True, 'k': True, 'q': True}
-        self.ep_square = -1
-        self.halfmove_clock = 0
-        self.fullmove_number = 1
-        init_sliding_tables()
-
-    def set_fen(self, fen):
-        parts = fen.split()
-        # parse board
-        sq = 56
-        for ch in parts[0]:
-            if ch == '/':
-                sq -= 16
-            elif ch.isdigit():
-                sq += int(ch)
-            else:
-                self.pieces[ch] |= 1 << sq
-                sq += 1
-        # parse side
-        self.side = WHITE if parts[1] == 'w' else BLACK
-        # parse castling
-        self.castling = {c: False for c in self.castling}
-        for c in parts[2]:
-            self.castling[c] = True
-        # parse ep
-        if parts[3] != '-':
-            file = ord(parts[3][0]) - ord('a')
-            rank = int(parts[3][1])-1
-            self.ep_square = rank*8 + file
-        else:
-            self.ep_square = -1
-        # halfmove, fullmove
-        self.halfmove_clock = int(parts[4])
-        self.fullmove_number = int(parts[5])
-        self.update_occupancy()
-
-    def update_occupancy(self):
-        occ_w = 0
-        occ_b = 0
-        for ch, bb in self.pieces.items():
-            if ch.isupper(): occ_w |= bb
-            else: occ_b |= bb
-        self.occupancy[WHITE] = occ_w
-        self.occupancy[BLACK] = occ_b
-        self.occupancy['both'] = occ_w | occ_b
-
-    def generate_moves(self):
-        moves = []
-        # Pawn moves...
-        # Knight jumps...
-        # Sliding pieces from precomputed rays...
-        # Castling...
-        # En passant...
-        return moves
-
-    def make_move(self, move):
-        # push move onto stack
-        # update bitboards, castling, ep, clocks, side
-        pass
-
-    def unmake_move(self, move, state):
-        # pop move from stack, restore state
-        pass
-
-# ----------------------------------------------------------------------
-# Move representation
-class Move:
-    def __init__(self, from_sq, to_sq, piece, capture=None, promotion=None, special=None):
-        self.from_sq = from_sq
-        self.to_sq = to_sq
-        self.piece = piece
-        self.capture = capture
-        self.promotion = promotion
-        self.special = special  # e.g. 'castle', 'ep'
-
-    def uci(self):
-        s = self.square_name(self.from_sq) + self.square_name(self.to_sq)
-        if self.promotion:
-            s += self.promotion.lower()
-        return s
-
-    @staticmethod
-    def square_name(sq):
-        return chr((sq%8)+97) + str((sq//8)+1)
-
-# ----------------------------------------------------------------------
-# Evaluation
-PIECE_VALUES = {'P':100,'N':320,'B':330,'R':500,'Q':900,'K':20000}
-
-PSQT = {
-    'P': [...], 'N': [...], 'B': [...], 'R': [...], 'Q': [...], 'K': [...],
-    'p': [...], 'n': [...], 'b': [...], 'r': [...], 'q': [...], 'k': [...],
+piece_square_tables = {
+    chess.PAWN: [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        5, 10, 10, -20, -20, 10, 10, 5,
+        5, -5, -10, 0, 0, -10, -5, 5,
+        0, 0, 0, 20, 20, 0, 0, 0,
+        5, 5, 10, 25, 25, 10, 5, 5,
+        10, 10, 20, 30, 30, 20, 10, 10,
+        50, 50, 50, 50, 50, 50, 50, 50,
+        0, 0, 0, 0, 0, 0, 0, 0
+    ],
+    chess.KNIGHT: [
+        -50, -40, -30, -30, -30, -30, -40, -50,
+        -40, -20, 0, 5, 5, 0, -20, -40,
+        -30, 5, 10, 15, 15, 10, 5, -30,
+        -30, 0, 15, 20, 20, 15, 0, -30,
+        -30, 5, 15, 20, 20, 15, 5, -30,
+        -30, 0, 10, 15, 15, 10, 0, -30,
+        -40, -20, 0, 0, 0, 0, -20, -40,
+        -50, -40, -30, -30, -30, -30, -40, -50
+    ],
+    chess.BISHOP: [
+        -20, -10, -10, -10, -10, -10, -10, -20,
+        -10, 5, 0, 0, 0, 0, 5, -10,
+        -10, 10, 10, 10, 10, 10, 10, -10,
+        -10, 0, 10, 10, 10, 10, 0, -10,
+        -10, 5, 5, 10, 10, 5, 5, -10,
+        -10, 0, 5, 10, 10, 5, 0, -10,
+        -10, 0, 0, 0, 0, 0, 0, -10,
+        -20, -10, -10, -10, -10, -10, -10, -20
+    ],
+    chess.ROOK: [
+        0, 0, 0, 5, 5, 0, 0, 0,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        5, 10, 10, 10, 10, 10, 10, 5,
+        0, 0, 0, 0, 0, 0, 0, 0
+    ],
+    chess.QUEEN: [
+        -20, -10, -10, -5, -5, -10, -10, -20,
+        -10, 0, 0, 0, 0, 0, 0, -10,
+        -10, 0, 5, 5, 5, 5, 0, -10,
+        -5, 0, 5, 5, 5, 5, 0, -5,
+        0, 0, 5, 5, 5, 5, 0, -5,
+        -10, 5, 5, 5, 5, 5, 0, -10,
+        -10, 0, 5, 0, 0, 0, 0, -10,
+        -20, -10, -10, -5, -5, -10, -10, -20
+    ],
+    chess.KING: [
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -20, -30, -30, -40, -40, -30, -30, -20,
+        -10, -20, -20, -20, -20, -20, -20, -10,
+        20, 20, 0, 0, 0, 0, 20, 20,
+        20, 30, 10, 0, 0, 10, 30, 20
+    ]
 }
 
-def evaluate(pos):
+center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
+
+def square_area(square, radius):
+    file = chess.square_file(square)
+    rank = chess.square_rank(square)
+    area = []
+    for df in range(-radius, radius + 1):
+        for dr in range(-radius, radius + 1):
+            f = file + df
+            r = rank + dr
+            if 0 <= f < 8 and 0 <= r < 8:
+                area.append(chess.square(f, r))
+    return area
+
+def evaluate_board(board):
+    if board.is_checkmate():
+        return -100000 if board.turn else 100000
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0
+
     score = 0
-    for ch, bb in pos.pieces.items():
-        val = PIECE_VALUES[ch.upper()]
-        # sum over bits in bb: score += val + PSQT
-        score += val * popcount(bb)
-    return score if pos.side == WHITE else -score
 
-# ----------------------------------------------------------------------
-# Search with alpha-beta and iterative deepening
-class Searcher:
-    def __init__(self, pos):
-        self.pos = pos
-        self.nodes = 0
-        self.best_move = None
+    for piece_type in piece_values:
+        white_pieces = board.pieces(piece_type, chess.WHITE)
+        black_pieces = board.pieces(piece_type, chess.BLACK)
+        score += len(white_pieces) * piece_values[piece_type]
+        score -= len(black_pieces) * piece_values[piece_type]
 
-    def search(self, depth, alpha, beta):
-        if depth == 0:
-            return evaluate(self.pos)
-        self.nodes += 1
-        moves = self.pos.generate_moves()
-        if not moves:
-            return -99999 if self.in_check(self.pos.side) else 0
-        for move in moves:
-            state = self.save_state()
-            self.pos.make_move(move)
-            score = -self.search(depth-1, -beta, -alpha)
-            self.pos.unmake_move(move, state)
-            if score >= beta:
-                return beta
-            if score > alpha:
-                alpha = score
-                self.best_move = move
-        return alpha
+    for piece_type, table in piece_square_tables.items():
+        for square in board.pieces(piece_type, chess.WHITE):
+            score += table[square]
+        for square in board.pieces(piece_type, chess.BLACK):
+            score -= table[chess.square_mirror(square)]
 
-    def iterative_deepening(self, max_depth, time_limit):
-        start = time.time()
-        for d in range(1, max_depth+1):
-            self.nodes = 0
-            sc = self.search(d, -100000, 100000)
-            if time.time() - start > time_limit:
-                break
-        return self.best_move
+    def king_safety(color):
+        king_square = board.king(color)
+        if king_square is None:
+            return -9999
+        danger = 0
+        attackers = board.attackers(not color, king_square)
+        danger -= len(attackers) * 20
+        for square in square_area(king_square, 1):
+            piece = board.piece_at(square)
+            if piece and piece.color == color:
+                danger += 5
+        return danger
 
-    def save_state(self):
-        # deep copy position fields needed to undo
-        return {}
+    score += king_safety(chess.WHITE)
+    score -= king_safety(chess.BLACK)
 
-    def in_check(self, side):
-        # detect check
-        return False
+    for square in center_squares:
+        piece = board.piece_at(square)
+        if piece:
+            score += 10 if piece.color == chess.WHITE else -10
 
-# ----------------------------------------------------------------------
-# UCI protocol handling
+    score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
 
-def uci_loop():
-    pos = Position()
-    searcher = Searcher(pos)
+    return score
+
+def move_score(board, move):
+    score = 0
+    if board.is_capture(move):
+        captured_piece = board.piece_at(move.to_square)
+        if captured_piece:
+            score += 10 * piece_values[captured_piece.piece_type]
+    if move.to_square in center_squares:
+        score += 20
+    piece = board.piece_at(move.from_square)
+    if piece and piece.piece_type == chess.PAWN:
+        rank = chess.square_rank(move.to_square)
+        score += rank * 5 if piece.color == chess.WHITE else (7 - rank) * 5
+    return score
+
+def negamax(board, depth, alpha, beta, color):
+    if depth == 0 or board.is_game_over():
+        return color * evaluate_board(board)
+
+    max_eval = -float('inf')
+    legal_moves = sorted(board.legal_moves, key=lambda move: move_score(board, move), reverse=True)
+
+    for move in legal_moves:
+        board.push(move)
+        eval = -negamax(board, depth - 1, -beta, -alpha, -color)
+        board.pop()
+        max_eval = max(max_eval, eval)
+        alpha = max(alpha, eval)
+        if alpha >= beta:
+            break
+    return max_eval
+
+def choose_move(board, max_time=2.0):
+    start = time.time()
+    best_move = None
+    best_score = -float('inf')
+    color = 1 if board.turn == chess.WHITE else -1
+    legal_moves = list(board.legal_moves)
+    legal_moves.sort(key=lambda move: move_score(board, move), reverse=True)
+
+    depth = 1
     while True:
-        try:
-            line = sys.stdin.readline().strip()
-        except KeyboardInterrupt:
-            break
-        if not line:
-            continue
-        parts = line.split()
-        cmd = parts[0]
-        if cmd == 'uci':
-            print('id name SmileyMate')
-            print('id author Classic')
-            print('uciok')
-        elif cmd == 'isready':
-            print('readyok')
-        elif cmd == 'ucinewgame':
-            pos = Position()
-            searcher = Searcher(pos)
-        elif cmd == 'position':
-            if parts[1] == 'startpos':
-                pos.set_fen('rn1qkbnr/pp3ppp/4p3/2pp4/3P4/5N2/PPP1PPPP/RNBQKB1R w KQkq c6 0 5')
-                mv_idx = parts.index('moves') if 'moves' in parts else -1
-                if mv_idx != -1:
-                    for mv in parts[mv_idx+1:]:
-                        # apply each move
-                        pass
-            elif parts[1] == 'fen':
-                fen = ' '.join(parts[2:])
-                pos.set_fen(fen)
-        elif cmd == 'go':
-            # parse go options
-            best = searcher.iterative_deepening(6, 5.0)
-            if best:
-                print('bestmove ' + best.uci())
-            else:
-                print('bestmove 0000')
-        elif cmd == 'quit':
+        current_best = None
+        current_best_score = -float('inf')
+
+        for move in legal_moves:
+            if time.time() - start > max_time:
+                return best_move if best_move else random.choice(legal_moves)
+
+            board.push(move)
+            score = -negamax(board, depth - 1, -float('inf'), float('inf'), -color)
+            board.pop()
+
+            if score > current_best_score:
+                current_best_score = score
+                current_best = move
+
+        if time.time() - start > max_time:
             break
 
-if __name__ == '__main__':
-    uci_loop()
+        best_move = current_best
+        best_score = current_best_score
+        depth += 1
+
+    return best_move
+
+def main():
+    board = chess.Board()
+
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.strip()
+
+        if line == "uci":
+            print("id name SmileyMate")
+            print("id author Classic")
+            print("uciok")
+        elif line == "isready":
+            print("readyok")
+        elif line.startswith("ucinewgame"):
+            board.reset()
+        elif line.startswith("position"):
+            parts = line.split(" ")
+            if "startpos" in parts:
+                board.reset()
+                if "moves" in parts:
+                    moves_index = parts.index("moves")
+                    moves = parts[moves_index + 1:]
+                    for mv in moves:
+                        board.push_uci(mv)
+            elif "fen" in parts:
+                fen_index = parts.index("fen")
+                fen_str = " ".join(parts[fen_index + 1:fen_index + 7])
+                board.set_fen(fen_str)
+                if "moves" in parts:
+                    moves_index = parts.index("moves")
+                    moves = parts[moves_index + 1:]
+                    for mv in moves:
+                        board.push_uci(mv)
+        elif line.startswith("go"):
+            tokens = line.split()
+            wtime = btime = None
+            if "wtime" in tokens:
+                wtime = int(tokens[tokens.index("wtime") + 1]) / 1000.0
+            if "btime" in tokens:
+                btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
+
+            current_time = wtime if board.turn == chess.WHITE else btime
+            think_time = max(0.1, min(current_time * 0.015, 3.0)) if current_time else 2.0
+
+            start_time = time.time()
+            move = choose_move(board, think_time)
+            elapsed = int((time.time() - start_time) * 1000)
+
+            if move is not None:
+                board.push(move)
+                eval_score = evaluate_board(board)
+                board.pop()
+                print(f"info score cp {eval_score} time {elapsed}")
+                print("bestmove", move.uci())
+            else:
+                print("bestmove 0000")
+        elif line == "quit":
+            break
+
+        sys.stdout.flush()
+
+if __name__ == "__main__":
+    main()
