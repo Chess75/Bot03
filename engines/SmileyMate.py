@@ -10,7 +10,7 @@ piece_values = {
     chess.BISHOP: 330,
     chess.ROOK: 500,
     chess.QUEEN: 900,
-    chess.KING: 0
+    chess.KING: 20000
 }
 
 piece_square_tables = {
@@ -32,7 +32,7 @@ piece_square_tables = {
         -30, 5, 15, 20, 20, 15, 5, -30,
         -30, 0, 10, 15, 15, 10, 0, -30,
         -40, -20, 0, 0, 0, 0, -20, -40,
-        -50, -40, -30, -30, -30, -30, -40, -50,
+        -50, -40, -30, -30, -30, -30, -40, -50
     ],
     chess.BISHOP: [
         -20, -10, -10, -10, -10, -10, -10, -20,
@@ -42,7 +42,37 @@ piece_square_tables = {
         -10, 5, 5, 10, 10, 5, 5, -10,
         -10, 0, 5, 10, 10, 5, 0, -10,
         -10, 0, 0, 0, 0, 0, 0, -10,
-        -20, -10, -10, -10, -10, -10, -10, -20,
+        -20, -10, -10, -10, -10, -10, -10, -20
+    ],
+    chess.ROOK: [
+        0, 0, 0, 5, 5, 0, 0, 0,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        -5, 0, 0, 0, 0, 0, 0, -5,
+        5, 10, 10, 10, 10, 10, 10, 5,
+        0, 0, 0, 0, 0, 0, 0, 0
+    ],
+    chess.QUEEN: [
+        -20, -10, -10, -5, -5, -10, -10, -20,
+        -10, 0, 0, 0, 0, 0, 0, -10,
+        -10, 0, 5, 5, 5, 5, 0, -10,
+        -5, 0, 5, 5, 5, 5, 0, -5,
+        0, 0, 5, 5, 5, 5, 0, -5,
+        -10, 5, 5, 5, 5, 5, 0, -10,
+        -10, 0, 5, 0, 0, 0, 0, -10,
+        -20, -10, -10, -5, -5, -10, -10, -20
+    ],
+    chess.KING: [
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -20, -30, -30, -40, -40, -30, -30, -20,
+        -10, -20, -20, -20, -20, -20, -20, -10,
+        20, 20, 0, 0, 0, 0, 20, 20,
+        20, 30, 10, 0, 0, 10, 30, 20
     ]
 }
 
@@ -105,65 +135,70 @@ def evaluate_board(board):
 
     return score
 
-def minimax(board, depth, alpha, beta):
+def move_score(board, move):
+    score = 0
+    if board.is_capture(move):
+        captured_piece = board.piece_at(move.to_square)
+        if captured_piece:
+            score += 10 * piece_values[captured_piece.piece_type]
+    if move.to_square in center_squares:
+        score += 20
+    piece = board.piece_at(move.from_square)
+    if piece and piece.piece_type == chess.PAWN:
+        rank = chess.square_rank(move.to_square)
+        score += rank * 5 if piece.color == chess.WHITE else (7 - rank) * 5
+    return score
+
+def negamax(board, depth, alpha, beta, color):
     if depth == 0 or board.is_game_over():
-        return evaluate_board(board)
+        return color * evaluate_board(board)
 
-    if board.turn == chess.WHITE:
-        max_eval = -float('inf')
-        for move in board.legal_moves:
+    max_eval = -float('inf')
+    legal_moves = sorted(board.legal_moves, key=lambda move: move_score(board, move), reverse=True)
+
+    for move in legal_moves:
+        board.push(move)
+        eval = -negamax(board, depth - 1, -beta, -alpha, -color)
+        board.pop()
+        max_eval = max(max_eval, eval)
+        alpha = max(alpha, eval)
+        if alpha >= beta:
+            break
+    return max_eval
+
+def choose_move(board, max_time=2.0):
+    start = time.time()
+    best_move = None
+    best_score = -float('inf')
+    color = 1 if board.turn == chess.WHITE else -1
+    legal_moves = list(board.legal_moves)
+    legal_moves.sort(key=lambda move: move_score(board, move), reverse=True)
+
+    depth = 1
+    while True:
+        current_best = None
+        current_best_score = -float('inf')
+
+        for move in legal_moves:
+            if time.time() - start > max_time:
+                return best_move if best_move else random.choice(legal_moves)
+
             board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
+            score = -negamax(board, depth - 1, -float('inf'), float('inf'), -color)
             board.pop()
-            max_eval = max(max_eval, eval)
-            alpha = max(alpha, eval)
-            if beta <= alpha:
-                break
-        return max_eval
-    else:
-        min_eval = float('inf')
-        for move in board.legal_moves:
-            board.push(move)
-            eval = minimax(board, depth - 1, alpha, beta)
-            board.pop()
-            min_eval = min(min_eval, eval)
-            beta = min(beta, eval)
-            if beta <= alpha:
-                break
-        return min_eval
 
-def choose_move(board, time_limit=2.0):
-    start_time = time.time()
+            if score > current_best_score:
+                current_best_score = score
+                current_best = move
 
-    best_score = -float('inf') if board.turn == chess.WHITE else float('inf')
-    best_moves = []
-
-    for move in board.legal_moves:
-        if time.time() - start_time > time_limit:
+        if time.time() - start > max_time:
             break
 
-        board.push(move)
-        score = minimax(board, 2, -float('inf'), float('inf'))
-        board.pop()
+        best_move = current_best
+        best_score = current_best_score
+        depth += 1
 
-        if board.turn == chess.WHITE:
-            if score > best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-        else:
-            if score < best_score:
-                best_score = score
-                best_moves = [move]
-            elif score == best_score:
-                best_moves.append(move)
-
-    elapsed = time.time() - start_time
-    if elapsed < time_limit:
-        time.sleep(time_limit - elapsed)
-
-    return random.choice(best_moves) if best_moves else random.choice(list(board.legal_moves))
+    return best_move
 
 def main():
     board = chess.Board()
@@ -209,7 +244,7 @@ def main():
                 btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
 
             current_time = wtime if board.turn == chess.WHITE else btime
-            think_time = min(current_time * 0.02, 2.0) if current_time else 2.0
+            think_time = max(0.1, min(current_time * 0.015, 3.0)) if current_time else 2.0
 
             start_time = time.time()
             move = choose_move(board, think_time)
