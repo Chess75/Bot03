@@ -170,6 +170,79 @@ def piece_mobility(board, color):
             mobility += len(board.attacks(square))
     return mobility
 
+def central_control(board, color):  
+    control = 0
+    for square in center_squares:
+        if board.piece_at(square) and board.piece_at(square).color == color:
+            control += 10  # Фигура стоит в центре
+        attackers = board.attackers(color, square)
+        control += len(attackers) * 3  # Фигура атакует центр
+    return control
+
+def risky_attacks(board, color):
+    penalty = 0
+    for square in chess.SQUARES:
+        attackers = board.attackers(color, square)
+        defenders = board.attackers(not color, square)
+
+        for attacker_square in attackers:
+            attacker = board.piece_at(attacker_square)
+            if attacker is None:
+                continue
+            if defenders:
+                # Если у атакуемого поля есть защита, но наша фигура слабее — плохо
+                for defender_square in defenders:
+                    defender = board.piece_at(defender_square)
+                    if defender and piece_values[attacker.piece_type] > piece_values[defender.piece_type]:
+                        penalty += piece_values[attacker.piece_type] // 10  # небольшой штраф
+                        break
+            else:
+                # Вообще никто не защищает — риск попасть под ответ
+                penalty += piece_values[attacker.piece_type] // 5
+    return -penalty  # это минус к позиции
+def king_exposure(board, color):
+    """Оценка открытости короля соперника (color - цвет атакующего)."""
+    enemy_color = not color
+    king_square = board.king(enemy_color)
+    if king_square is None:
+        return 0  # Король съеден — конец игры, но на всякий
+    
+    defenders = 0
+    for square in square_area(king_square, 1):
+        piece = board.piece_at(square)
+        if piece and piece.color == enemy_color:
+            defenders += 1
+    # Чем меньше защитников — тем больше очков
+    return max(0, 5 - defenders) * 20
+
+def mate_in_n(board, depth, color):
+    """Простой поиск мата в N ходов (depth - количество ходов вперед)."""
+    if depth == 0 or board.is_game_over():
+        if board.is_checkmate():
+            return True
+        else:
+            return False
+
+    for move in board.legal_moves:
+        board.push(move)
+        is_mate = not mate_in_n(board, depth - 1, not color)
+        board.pop()
+        if is_mate:
+            return True
+    return False
+
+def evaluate_king_attack(board, color):
+    """Комбинированная функция для оценки атаки на короля соперника."""
+    score = 0
+    score += king_exposure(board, color)
+
+    # Проверим мат в 2 хода — можно увеличить глубину
+    if mate_in_n(board, 4, color):
+        score += 100000  # Очень большой бонус — мат
+    
+    return score
+
+
 def evaluate_board(board):
     if board.is_checkmate():
         return -100000 if board.turn else 100000
@@ -236,6 +309,10 @@ def evaluate_board(board):
         score += space_advantage(board, color) * sign
         score += piece_connection_bonus(board, color) * sign
         score += piece_mobility(board, color) // 2 * sign
+        score += central_control(board, color) * sign
+        score += risky_attacks(board, color) * sign
+        score += evaluate_king_attack(board, color) * sign
+
 
     return score
 
