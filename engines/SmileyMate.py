@@ -90,6 +90,56 @@ def square_area(square, radius):
                 area.append(chess.square(f, r))
     return area
 
+def is_open_file(board, file_index):
+    for rank in range(8):
+        square = chess.square(file_index, rank)
+        piece = board.piece_at(square)
+        if piece and piece.piece_type == chess.PAWN:
+            return False
+    return True
+
+def is_half_open_file(board, file_index, color):
+    for rank in range(8):
+        square = chess.square(file_index, rank)
+        piece = board.piece_at(square)
+        if piece and piece.piece_type == chess.PAWN and piece.color == color:
+            return False
+    return True
+
+def evaluate_pawn_structure(board, color):
+    score = 0
+    pawns = board.pieces(chess.PAWN, color)
+    files = defaultdict(int)
+
+    for square in pawns:
+        file = chess.square_file(square)
+        rank = chess.square_rank(square)
+        files[file] += 1
+
+        # Изолированная пешка
+        if file > 0 and not board.pieces(chess.PAWN, color) & chess.BB_FILES[file - 1] and \
+           file < 7 and not board.pieces(chess.PAWN, color) & chess.BB_FILES[file + 1]:
+            score -= 15
+
+        # Связанная пешка (есть союзные пешки по диагонали)
+        for df in [-1, 1]:
+            if 0 <= file + df < 8:
+                diag_square = chess.square(file + df, rank - 1 if color == chess.WHITE else rank + 1)
+                if board.piece_at(diag_square) and board.piece_at(diag_square).piece_type == chess.PAWN and board.piece_at(diag_square).color == color:
+                    score += 10
+
+        # Слабая пешка (не защищена и под атакой)
+        defenders = board.attackers(color, square)
+        attackers = board.attackers(not color, square)
+        if not defenders and attackers:
+            score -= 20
+
+    for file, count in files.items():
+        if count > 1:
+            score -= 10 * (count - 1)  # Удвоенные пешки
+
+    return score
+
 def evaluate_board(board):
     if board.is_checkmate():
         return -100000 if board.turn else 100000
@@ -132,6 +182,25 @@ def evaluate_board(board):
             score += 10 if piece.color == chess.WHITE else -10
 
     score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
+
+    # Ладья на открытой или полуоткрытой линии
+    for color in [chess.WHITE, chess.BLACK]:
+        sign = 1 if color == chess.WHITE else -1
+        for rook in board.pieces(chess.ROOK, color):
+            file = chess.square_file(rook)
+            if is_open_file(board, file):
+                score += 30 * sign
+            elif is_half_open_file(board, file, color):
+                score += 15 * sign
+
+        # Ферзь на открытой линии
+        for queen in board.pieces(chess.QUEEN, color):
+            file = chess.square_file(queen)
+            if is_open_file(board, file):
+                score += 10 * sign
+
+        # Пешечная структура
+        score += evaluate_pawn_structure(board, color) * sign
 
     return score
 
@@ -210,8 +279,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate")
-            print("id author Classic")
+            print("id name SmileyMate+")
+            print("id author Classic+GPT")
             print("uciok")
         elif line == "isready":
             print("readyok")
@@ -244,7 +313,13 @@ def main():
                 btime = int(tokens[tokens.index("btime") + 1]) / 1000.0
 
             current_time = wtime if board.turn == chess.WHITE else btime
-            think_time = max(0.1, min(current_time * 0.015, 3.0)) if current_time else 2.0
+            if current_time is not None:
+                if current_time < 10:
+                    think_time = 0.05
+                else:
+                    think_time = min(3.0, max(0.1, current_time * 0.015))
+            else:
+                think_time = 2.0
 
             start_time = time.time()
             move = choose_move(board, think_time)
