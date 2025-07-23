@@ -119,18 +119,22 @@ def evaluate_pawn_structure(board, color):
         files[file] += 1
 
         # Изолированная пешка
-        if file > 0 and not board.pieces(chess.PAWN, color) & chess.BB_FILES[file - 1] and \
-           file < 7 and not board.pieces(chess.PAWN, color) & chess.BB_FILES[file + 1]:
+        adjacent_files = [file - 1, file + 1]
+        isolated = True
+        for adj in adjacent_files:
+            if 0 <= adj < 8 and board.pieces(chess.PAWN, color) & chess.BB_FILES[adj]:
+                isolated = False
+        if isolated:
             score -= 15
 
-        # Связанная пешка (есть союзные пешки по диагонали)
+        # Связанная пешка
         for df in [-1, 1]:
             if 0 <= file + df < 8:
                 diag_square = chess.square(file + df, rank - 1 if color == chess.WHITE else rank + 1)
                 if board.piece_at(diag_square) and board.piece_at(diag_square).piece_type == chess.PAWN and board.piece_at(diag_square).color == color:
                     score += 10
 
-        # Слабая пешка (не защищена и под атакой)
+        # Слабая пешка
         defenders = board.attackers(color, square)
         attackers = board.attackers(not color, square)
         if not defenders and attackers:
@@ -141,6 +145,30 @@ def evaluate_pawn_structure(board, color):
             score -= 10 * (count - 1)  # Удвоенные пешки
 
     return score
+
+def space_advantage(board, color):
+    territory = 0
+    for square in chess.SQUARES:
+        rank = chess.square_rank(square)
+        if (color == chess.WHITE and rank >= 4) or (color == chess.BLACK and rank <= 3):
+            if board.attackers(color, square):
+                territory += 1
+    return territory * 2
+
+def piece_connection_bonus(board, color):
+    bonus = 0
+    pieces = board.pieces(chess.ROOK, color) | board.pieces(chess.QUEEN, color)
+    for square in pieces:
+        if board.attackers(color, square):
+            bonus += 5
+    return bonus
+
+def piece_mobility(board, color):
+    mobility = 0
+    for piece_type in [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]:
+        for square in board.pieces(piece_type, color):
+            mobility += len(board.attacks(square))
+    return mobility
 
 def evaluate_board(board):
     if board.is_checkmate():
@@ -185,9 +213,10 @@ def evaluate_board(board):
 
     score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
 
-    # Ладья на открытой или полуоткрытой линии
     for color in [chess.WHITE, chess.BLACK]:
         sign = 1 if color == chess.WHITE else -1
+
+        # Ладья/ферзь на открытой линии
         for rook in board.pieces(chess.ROOK, color):
             file = chess.square_file(rook)
             if is_open_file(board, file):
@@ -195,7 +224,6 @@ def evaluate_board(board):
             elif is_half_open_file(board, file, color):
                 score += 15 * sign
 
-        # Ферзь на открытой линии
         for queen in board.pieces(chess.QUEEN, color):
             file = chess.square_file(queen)
             if is_open_file(board, file):
@@ -203,6 +231,11 @@ def evaluate_board(board):
 
         # Пешечная структура
         score += evaluate_pawn_structure(board, color) * sign
+
+        # Позиционные фишки
+        score += space_advantage(board, color) * sign
+        score += piece_connection_bonus(board, color) * sign
+        score += piece_mobility(board, color) // 2 * sign
 
     return score
 
@@ -281,8 +314,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate+")
-            print("id author Classic+GPT")
+            print("id name SmileyMate 230725dev")
+            print("id author Classic")
             print("uciok")
         elif line == "isready":
             print("readyok")
