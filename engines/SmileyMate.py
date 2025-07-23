@@ -3,6 +3,8 @@ import sys
 import chess
 import random
 import time
+from collections import defaultdict
+
 
 piece_values = {
     chess.PAWN: 100,
