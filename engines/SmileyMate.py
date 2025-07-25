@@ -78,11 +78,8 @@ piece_square_tables = {
 }
 
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
-
-# ====== Transposition Table ======
 transposition_table = {}
 
-# ====== Utilities ======
 def zobrist_hash(board):
     return hashlib.md5(board.board_fen().encode()).hexdigest()
 
@@ -98,7 +95,17 @@ def square_area(square, radius):
                 area.append(chess.square(f, r))
     return area
 
-# ====== Evaluation Function ======
+def penalize_undefended_pieces(board):
+    penalty = 0
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece and piece.color == board.turn:
+            attackers = board.attackers(not board.turn, square)
+            defenders = board.attackers(board.turn, square)
+            if attackers and not defenders:
+                penalty -= piece_values[piece.piece_type] // 3
+    return penalty
+
 def evaluate_board(board):
     if board.is_checkmate():
         return -100000 if board.turn else 100000
@@ -140,11 +147,11 @@ def evaluate_board(board):
         if piece:
             score += 10 if piece.color == chess.WHITE else -10
 
+    score += penalize_undefended_pieces(board)
     score += len(list(board.legal_moves)) * (1 if board.turn == chess.WHITE else -1)
 
     return score
 
-# ====== Move Ordering ======
 def move_score(board, move):
     score = 0
     if board.is_capture(move):
@@ -154,14 +161,17 @@ def move_score(board, move):
     if move.to_square in center_squares:
         score += 20
     piece = board.piece_at(move.from_square)
-    if piece and piece.piece_type == chess.PAWN:
-        rank = chess.square_rank(move.to_square)
-        score += rank * 5 if piece.color == chess.WHITE else (7 - rank) * 5
+    if piece:
+        if piece.piece_type == chess.PAWN:
+            rank = chess.square_rank(move.to_square)
+            score += rank * 5 if piece.color == chess.WHITE else (7 - rank) * 5
+        if piece.piece_type == chess.KNIGHT:
+            if chess.square_file(move.to_square) in [0, 7] or chess.square_rank(move.to_square) in [0, 7]:
+                score -= 15
     if board.gives_check(move):
         score += 30
     return score
 
-# ====== Negamax Search with Alpha-Beta and TT ======
 def negamax(board, depth, alpha, beta, color):
     h = zobrist_hash(board)
     if h in transposition_table and transposition_table[h]['depth'] >= depth:
@@ -187,7 +197,6 @@ def negamax(board, depth, alpha, beta, color):
     transposition_table[h] = {'depth': depth, 'value': max_eval}
     return max_eval
 
-# ====== Iterative Deepening ======
 def choose_move(board, max_time=2.0):
     start = time.time()
     best_move = None
@@ -203,7 +212,7 @@ def choose_move(board, max_time=2.0):
 
         for move in legal_moves:
             if time.time() - start > max_time:
-                return best_move if best_move else random.choice(legal_moves)
+                return current_best if current_best else random.choice(legal_moves)
 
             board.push(move)
             score = -negamax(board, depth - 1, -float('inf'), float('inf'), -color)
@@ -220,9 +229,8 @@ def choose_move(board, max_time=2.0):
         best_score = current_best_score
         depth += 1
 
-    return best_move
+    return best_move if best_move else random.choice(legal_moves)
 
-# ====== UCI Interface ======
 def main():
     board = chess.Board()
 
