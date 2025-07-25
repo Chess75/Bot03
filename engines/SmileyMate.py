@@ -233,8 +233,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name TurboMate")
-            print("id author Classic_555")
+            print("id name SmileyMate")
+            print("id author Classic")
             print("uciok")
         elif line == "isready":
             print("readyok")
