@@ -3,6 +3,7 @@ import sys
 import chess
 import random
 import time
+import hashlib
 
 piece_values = {
     chess.PAWN: 100,
@@ -78,6 +79,13 @@ piece_square_tables = {
 
 center_squares = [chess.D4, chess.E4, chess.D5, chess.E5]
 
+# ====== Transposition Table ======
+transposition_table = {}
+
+# ====== Utilities ======
+def zobrist_hash(board):
+    return hashlib.md5(board.board_fen().encode()).hexdigest()
+
 def square_area(square, radius):
     file = chess.square_file(square)
     rank = chess.square_rank(square)
@@ -90,6 +98,7 @@ def square_area(square, radius):
                 area.append(chess.square(f, r))
     return area
 
+# ====== Evaluation Function ======
 def evaluate_board(board):
     if board.is_checkmate():
         return -100000 if board.turn else 100000
@@ -135,6 +144,7 @@ def evaluate_board(board):
 
     return score
 
+# ====== Move Ordering ======
 def move_score(board, move):
     score = 0
     if board.is_capture(move):
@@ -147,11 +157,20 @@ def move_score(board, move):
     if piece and piece.piece_type == chess.PAWN:
         rank = chess.square_rank(move.to_square)
         score += rank * 5 if piece.color == chess.WHITE else (7 - rank) * 5
+    if board.gives_check(move):
+        score += 30
     return score
 
+# ====== Negamax Search with Alpha-Beta and TT ======
 def negamax(board, depth, alpha, beta, color):
+    h = zobrist_hash(board)
+    if h in transposition_table and transposition_table[h]['depth'] >= depth:
+        return transposition_table[h]['value']
+
     if depth == 0 or board.is_game_over():
-        return color * evaluate_board(board)
+        eval = color * evaluate_board(board)
+        transposition_table[h] = {'depth': depth, 'value': eval}
+        return eval
 
     max_eval = -float('inf')
     legal_moves = sorted(board.legal_moves, key=lambda move: move_score(board, move), reverse=True)
@@ -164,8 +183,11 @@ def negamax(board, depth, alpha, beta, color):
         alpha = max(alpha, eval)
         if alpha >= beta:
             break
+
+    transposition_table[h] = {'depth': depth, 'value': max_eval}
     return max_eval
 
+# ====== Iterative Deepening ======
 def choose_move(board, max_time=2.0):
     start = time.time()
     best_move = None
@@ -200,6 +222,7 @@ def choose_move(board, max_time=2.0):
 
     return best_move
 
+# ====== UCI Interface ======
 def main():
     board = chess.Board()
 
@@ -210,8 +233,8 @@ def main():
         line = line.strip()
 
         if line == "uci":
-            print("id name SmileyMate")
-            print("id author Classic")
+            print("id name TurboMate")
+            print("id author Classic_555")
             print("uciok")
         elif line == "isready":
             print("readyok")
